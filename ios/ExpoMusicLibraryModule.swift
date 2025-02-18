@@ -2,12 +2,16 @@ import ExpoModulesCore
 import PhotosUI
 import MediaPlayer
 
-public class MusicLibraryModule: Module, PhotoLibraryObserverHandler {
-  private var allAssetsFetchResult: PHFetchResult<PHAsset>?
+public class MusicLibraryModule: Module, MusicLibraryObserverHandler {
   private var writeOnly = false
-  private var delegates = Set<SaveToLibraryDelegate>()
-  private var changeDelegate: PhotoLibraryObserver?
+  private var changeDelegate: MusicLibraryObserver?
   
+  func didChange() {
+    sendEvent("musicLibraryDidChange", [
+      "hasIncrementalChanges": true
+    ])
+
+  }
 
   public func definition() -> ModuleDefinition {
     Name("ExpoMusicLibrary")
@@ -18,18 +22,11 @@ public class MusicLibraryModule: Module, PhotoLibraryObserverHandler {
       [
         "MediaType": [
           "audio": "audio",
-          "photo": "photo",
-          "video": "video",
-          "unknown": "unknown",
-          "all": "all"
         ],
         "SortBy": [
           "default": "default",
           "creationTime": "creationTime",
           "modificationTime": "modificationTime",
-          "mediaType": "mediaType",
-          "width": "width",
-          "height": "height",
           "duration": "duration"
         ],
         "CHANGE_LISTENER_NAME": "musicLibraryDidChange"
@@ -53,8 +50,6 @@ public class MusicLibraryModule: Module, PhotoLibraryObserverHandler {
           reject: promise.legacyRejecter
         )
     }
-    
-    
 
     AsyncFunction("requestPermissionsAsync") { [weak self] (writeOnly: Bool, promise: Promise) in
       guard let self = self else {
@@ -63,7 +58,6 @@ public class MusicLibraryModule: Module, PhotoLibraryObserverHandler {
       }
 
       self.writeOnly = writeOnly
-      
       let mediaLibraryStatus = MPMediaLibrary.authorizationStatus()
 
       switch mediaLibraryStatus {
@@ -105,30 +99,12 @@ public class MusicLibraryModule: Module, PhotoLibraryObserverHandler {
       }
     }
 
-    AsyncFunction("presentPermissionsPickerAsync") { (promise: Promise) in
-      guard let vc = appContext?.utilities?.currentViewController() else {
-        return
-      }
-        if #available(iOS 14, *) {
-            PHPhotoLibrary.shared().presentLimitedLibraryPicker(from: vc)
-        }
-        else {
-            promise.reject("UnsupportedVersion", "Limited library picker is not supported on this iOS version.")
-        }
-    }.runOnQueue(.main)
-
     AsyncFunction("createAssetAsync") { (uri: URL, promise: Promise) in
       if !checkPermissions(promise: promise) {
         return
       }
 
-      if uri.pathExtension.isEmpty {
-        promise.reject(EmptyFileExtensionException())
-        return
-      }
-
-      let assetType = assetType(for: uri)
-      if assetType == .unknown || assetType == .audio {
+      if uri.pathExtension.isEmpty || uri.pathExtension.lowercased() != "mp3" {
         promise.reject(UnsupportedAssetTypeException(uri.absoluteString))
         return
       }
@@ -140,10 +116,8 @@ public class MusicLibraryModule: Module, PhotoLibraryObserverHandler {
 
       var assetPlaceholder: PHObjectPlaceholder?
       PHPhotoLibrary.shared().performChanges {
-        let changeRequest = assetType == .video
-        ? PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: uri)
-        : PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: uri)
-
+        let changeRequest = PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: uri) // Modified for audio creation
+        
         assetPlaceholder = changeRequest?.placeholderForCreatedAsset
       } completionHandler: { success, error in
         if success {
@@ -155,279 +129,68 @@ public class MusicLibraryModule: Module, PhotoLibraryObserverHandler {
       }
     }
 
-    AsyncFunction("saveToLibraryAsync") { (localUrl: URL, promise: Promise) in
-      if Bundle.main.infoDictionary?["NSPhotoLibraryAddUsageDescription"] == nil {
-        throw MissingPListKeyException("NSPhotoLibraryAddUsageDescription")
+    AsyncFunction("getFoldersAsync") { (promise: Promise) in
+      let query = MPMediaQuery.playlists()
+      let collections = query.collections ?? []
+      let folders = collections.map { playlist -> [String: Any] in
+        return [
+          "id": "\(playlist.persistentID)",
+          "title": playlist.value(forProperty: MPMediaPlaylistPropertyName) as? String ?? "Unknown Playlist"
+        ]
       }
-
-      if localUrl.pathExtension.isEmpty {
-        promise.reject(EmptyFileExtensionException())
-        return
-      }
-
-      let assetType = assetType(for: localUrl)
-      let delegate = SaveToLibraryDelegate()
-      delegates.insert(delegate)
-
-      let callback: SaveToLibraryCallback = { [weak self] _, error in
-        guard let self else {
-          return
-        }
-        self.delegates.remove(delegate)
-        guard error == nil else {
-          promise.reject(SaveAssetException(error))
-          return
-        }
-        promise.resolve()
-      }
-
-      if assetType == .image {
-        if localUrl.pathExtension.lowercased() == "gif" {
-          delegate.writeGIF(localUrl, withCallback: callback)
-          return
-        }
-
-        guard let image = UIImage(data: try Data(contentsOf: localUrl)) else {
-          promise.reject(MissingFileException(localUrl.absoluteString))
-          return
-        }
-        delegate.writeImage(image, withCallback: callback)
-        return
-      } else if assetType == .video {
-        if UIVideoAtPathIsCompatibleWithSavedPhotosAlbum(localUrl.path) {
-          delegate.writeVideo(localUrl, withCallback: callback)
-          return
-        }
-        promise.reject(SaveVideoException())
-        return
-      }
-
-      promise.reject(UnsupportedAssetException())
+      promise.resolve(folders)
     }
 
-    AsyncFunction("addAssetsToAlbumAsync") { (assetIds: [String], album: String, promise: Promise) in
-      runIfAllPermissionsWereGranted(reject: promise.legacyRejecter) {
-        addAssets(ids: assetIds, to: album) { success, error in
-          if success {
-            promise.resolve(success)
-          } else {
-            promise.reject(SaveAlbumException(error))
-          }
-        }
-      }
-    }
-
-    AsyncFunction("removeAssetsFromAlbumAsync") { (assetIds: [String], album: String, promise: Promise) in
-      runIfAllPermissionsWereGranted(reject: promise.legacyRejecter) {
-        PHPhotoLibrary.shared().performChanges {
-          guard let collection = getAlbum(by: album) else {
-            return
-          }
-          let assets = getAssetsBy(assetIds: assetIds)
-
-          let albumChangeRequest = PHAssetCollectionChangeRequest(for: collection, assets: assets)
-          albumChangeRequest?.removeAssets(assets)
-        } completionHandler: { success, error in
-          if success {
-            promise.resolve(success)
-          } else {
-            promise.reject(RemoveFromAlbumException(error))
-          }
-        }
-      }
-    }
-
-    AsyncFunction("deleteAssetsAsync") { (assetIds: [String], promise: Promise) in
-      if !checkPermissions(promise: promise) {
-        return
-      }
-
-      PHPhotoLibrary.shared().performChanges {
-        let fetched = PHAsset.fetchAssets(withLocalIdentifiers: assetIds, options: nil)
-        PHAssetChangeRequest.deleteAssets(fetched)
-      } completionHandler: { success, error in
-        if success {
-          promise.resolve(success)
-        } else {
-          promise.reject(RemoveAssetsException(error))
-        }
-      }
-    }
-
-    AsyncFunction("getAlbumsAsync") { (options: AlbumOptions, promise: Promise) in
-      runIfAllPermissionsWereGranted(reject: promise.legacyRejecter) {
-        var albums = [[String: Any?]?]()
-        let fetchOptions = PHFetchOptions()
-        fetchOptions.includeHiddenAssets = false
-        fetchOptions.includeAllBurstAssets = false
-
-        let useAlbumsfetchResult = PHCollectionList.fetchTopLevelUserCollections(with: fetchOptions)
-
-        let collections = exportCollections(collections: useAlbumsfetchResult, with: fetchOptions, in: nil)
-        albums.append(contentsOf: collections)
-
-        if options.includeSmartAlbums {
-          let smartAlbumsFetchResult = PHAssetCollection.fetchAssetCollections(with: .smartAlbum, subtype: .any, options: fetchOptions)
-          albums.append(contentsOf: exportCollections(collections: smartAlbumsFetchResult, with: fetchOptions, in: nil))
-        }
-
-        promise.resolve(albums)
-      }
-    }
+    AsyncFunction("getFolderAssetsAsync") { (folderId: String, promise: Promise) in
+      let query = MPMediaQuery.songs()
+      let predicate = MPMediaPropertyPredicate(value: UInt64(folderId), forProperty: MPMediaPlaylistPropertyPersistentID)
+      query.addFilterPredicate(predicate)
       
-    AsyncFunction("getAlbumAssetsAsync") { (albumId: String, promise: Promise) in
-        runIfAllPermissionsWereGranted(reject: promise.legacyRejecter) {
-          guard let collection = getAlbum(by: albumId) else {
-            promise.reject("AlbumNotFound", "The album with the specified ID was not found.")
-            return
-          }
-
-          let fetchOptions = PHFetchOptions()
-          fetchOptions.includeHiddenAssets = false
-          fetchOptions.includeAllBurstAssets = false
-
-          let assetsFetchResult = PHAsset.fetchAssets(in: collection, options: fetchOptions)
-          let assets = getAssets(fetchResult: assetsFetchResult, cursorIndex: 0, numOfRequestedItems: assetsFetchResult.count)
-
-          promise.resolve(assets.assets)
-        }
+      guard let items = query.items else {
+        promise.resolve([])
+        return
+      }
+      
+      let assets = items.map { item -> [String: Any] in
+        return formatSongFromMediaItem(item)
+      }
+      promise.resolve(assets)
     }
 
-    AsyncFunction("getMomentsAsync") { (promise: Promise) in
-      if !checkPermissions(promise: promise) {
+    AsyncFunction("getAlbumsAsync") { (promise: Promise) in
+      let query = MPMediaQuery.albums()
+      guard let collections = query.collections else {
+        promise.resolve([])
         return
       }
 
-      let options = PHFetchOptions()
-      options.includeHiddenAssets = false
-      options.includeAllBurstAssets = false
-
-      let fetchResult = PHAssetCollection.fetchMoments(with: options)
-      let albums = exportCollections(collections: fetchResult, with: options, in: nil)
-
+      let albums = collections.map { album -> [String: Any] in
+        return [
+          "id": "\(album.persistentID)",
+          "title": album.representativeItem?.albumTitle ?? "Unknown Album",
+          "artist": album.representativeItem?.artist ?? "Unknown Artist",
+          "artwork": getArtwork(album.representativeItem) ?? ""
+        ]
+      }
       promise.resolve(albums)
     }
 
-    AsyncFunction("getAlbumAsync") { (title: String, promise: Promise) in
-      runIfAllPermissionsWereGranted(reject: promise.legacyRejecter) {
-        let collection = getAlbum(with: title)
-        promise.resolve(exportCollection(collection))
-      }
-    }
-
-    AsyncFunction("createAlbumAsync") { (title: String, assetId: String?, promise: Promise) in
-      runIfAllPermissionsWereGranted(reject: promise.legacyRejecter) {
-        createAlbum(with: title) { collection, createError in
-          if let collection {
-            if let assetId {
-              addAssets(ids: [assetId], to: collection.localIdentifier) { success, addError in
-                if success {
-                  promise.resolve(exportCollection(collection))
-                } else {
-                  promise.reject(FailedToAddAssetException(addError))
-                }
-              }
-            } else {
-              promise.resolve(exportCollection(collection))
-            }
-          } else {
-            promise.reject(CreateAlbumFailedException(createError))
-          }
-        }
-      }
-    }
-
-    AsyncFunction("deleteAlbumsAsync") { (albumIds: [String], removeAsset: Bool, promise: Promise) in
-      runIfAllPermissionsWereGranted(reject: promise.legacyRejecter) {
-        let collections = getAlbums(by: albumIds)
-        PHPhotoLibrary.shared().performChanges {
-          if removeAsset {
-            collections.enumerateObjects { collection, _, _ in
-              let fetch = PHAsset.fetchAssets(in: collection, options: nil)
-              PHAssetChangeRequest.deleteAssets(fetch)
-            }
-          }
-          PHAssetCollectionChangeRequest.deleteAssetCollections(collections)
-        } completionHandler: { success, error in
-          if success {
-            promise.resolve(success)
-          } else {
-            promise.reject(DeleteAlbumFailedException(error))
-          }
-        }
-      }
-    }
-    
-    AsyncFunction("getFoldersAsync") { (promise: Promise) in
-        runIfAllPermissionsWereGranted(reject: promise.legacyRejecter) {
-          let fetchOptions = PHFetchOptions()
-          let topLevelCollections = PHCollectionList.fetchTopLevelUserCollections(with: fetchOptions)
-
-          let folders = exportCollections(collections: topLevelCollections, with: fetchOptions, in: nil)
-          promise.resolve(folders)
-        }
-    }
+    AsyncFunction("getAlbumAssetsAsync") { (albumId: String, promise: Promise) in
+      let query = MPMediaQuery.songs()
+      let predicate = MPMediaPropertyPredicate(value: UInt64(albumId), forProperty: MPMediaItemPropertyAlbumPersistentID)
+      query.addFilterPredicate(predicate)
       
-    AsyncFunction("getFolderAssetsAsync") { (folderId: String, promise: Promise) in
-      runIfAllPermissionsWereGranted(reject: promise.legacyRejecter) {
-        // Retrieve the collection list (folder) using the folderId
-        let fetchOptions = PHFetchOptions()
-        let collectionLists = PHCollectionList.fetchCollectionLists(withLocalIdentifiers: [folderId], options: fetchOptions)
-        
-        guard let collectionList = collectionLists.firstObject else {
-          promise.reject("FolderNotFound", "The folder with the specified ID was not found.")
-          return
-        }
-
-        // Fetch subcollections (albums) within the folder
-        let subCollections = PHCollectionList.fetchCollections(in: collectionList, options: fetchOptions)
-        var allAssets = [[String: Any?]]()
-
-        // Iterate through the subcollections and fetch their assets
-        subCollections.enumerateObjects { collection, _, _ in
-          if let assetCollection = collection as? PHAssetCollection {
-              let assetsFetchResult = PHAsset.fetchAssets(in: assetCollection, options: fetchOptions)
-              let assets = getAssets(fetchResult: assetsFetchResult, cursorIndex: 0, numOfRequestedItems: assetsFetchResult.count)
-              allAssets.append(contentsOf: assets.assets)
-          }
-        }
-
-        promise.resolve(allAssets)
-      }
-    }
-
-    AsyncFunction("getAssetInfoAsync") { (assetId: String?, options: AssetInfoOptions, promise: Promise) in
-      if !checkPermissions(promise: promise) {
+      guard let items = query.items else {
+        promise.resolve([])
         return
       }
-
-      guard let asset = getAssetBy(id: assetId) else {
-        promise.resolve(nil)
-        return
+      
+      let assets = items.map { item -> [String: Any] in
+        return formatSongFromMediaItem(item)
       }
-
-      if asset.mediaType == .image {
-        resolveImage(asset: asset, options: options, promise: promise)
-      } else {
-        resolveVideo(asset: asset, options: options, promise: promise)
-      }
+      promise.resolve(assets)
     }
 
-    AsyncFunction("getAssetsAsync") { (options: AssetWithOptions, promise: Promise) in
-      if !checkPermissions(promise: promise) {
-        return
-      }
-
-      if let albumId = options.album {
-        runIfAllPermissionsWereGranted(reject: promise.legacyRejecter) {
-          let collection = getAlbum(by: albumId)
-          getAssetsWithAfter(options: options, collection: collection, promise: promise)
-        }
-      } else {
-        getAssetsWithAfter(options: options, collection: nil, promise: promise)
-      }
-    }
-    
     AsyncFunction("getArtistsAsync") { (promise: Promise) in
       let query = MPMediaQuery.artists()
       guard let collections = query.collections else {
@@ -435,166 +198,131 @@ public class MusicLibraryModule: Module, PhotoLibraryObserverHandler {
         return
       }
 
-      var artists: [[String: Any]] = []
-
-      for artist in collections {
-        let artistName = artist.representativeItem?.artist ?? "Unknown Artist"
-        let artistId = artist.persistentID
-
-        artists.append([
-          "artistId": "\(artistId)",
-          "artistName": artistName
-        ])
+      let artists = collections.map { artist -> [String: Any] in
+        return [
+          "id": "\(artist.persistentID)",
+          "title": artist.representativeItem?.artist ?? "Unknown Artist"
+        ]
       }
-
       promise.resolve(artists)
     }
 
     AsyncFunction("getArtistAssetsAsync") { (artistId: String, promise: Promise) in
       let query = MPMediaQuery.songs()
-
-      let artistFilter = MPMediaPropertyPredicate(value: UInt64(artistId), forProperty: MPMediaItemPropertyArtistPersistentID)
-      query.addFilterPredicate(artistFilter)
+      let predicate = MPMediaPropertyPredicate(value: UInt64(artistId), forProperty: MPMediaItemPropertyArtistPersistentID)
+      query.addFilterPredicate(predicate)
 
       guard let items = query.items else {
         promise.resolve([])
         return
       }
 
-      var songs: [[String: Any]] = []
-
-      for item in items {
-        songs.append(formatSongFromMediaItem(item))
+      let assets = items.map { item -> [String: Any] in
+        return formatSongFromMediaItem(item)
       }
-
-      promise.resolve(songs)
+      promise.resolve(assets)
     }
-    
+
     AsyncFunction("getGenresAsync") { (promise: Promise) in
-      // Query the iOS music library to get all genres
       let query = MPMediaQuery.genres()
       guard let collections = query.collections else {
         promise.resolve([])
         return
       }
 
-      var genres: [[String: Any]] = []
-
-      for genre in collections {
-        let genreName = genre.representativeItem?.genre ?? "Unknown Genre"
-        let genreId = genre.persistentID
-
-        genres.append([
-          "genreId": "\(genreId)", // Convert the persistentID to a string to avoid large number issues
-          "genreName": genreName
-        ])
+      let genres = collections.map { genre -> [String: Any] in
+        return [
+          "id": "\(genre.persistentID)",
+          "title": genre.representativeItem?.genre ?? "Unknown Genre"
+        ]
       }
-
       promise.resolve(genres)
     }
-    
-    AsyncFunction("getGenreAssetsAsync") { (genreId: String, promise: Promise) in
-      // Create a query to fetch songs for a specific genre
-      let query = MPMediaQuery.songs()
 
-      // Apply a filter to query only the songs from the specified genre
-      let genreFilter = MPMediaPropertyPredicate(value: UInt64(genreId), forProperty: MPMediaItemPropertyGenrePersistentID)
-      query.addFilterPredicate(genreFilter)
+    AsyncFunction("getGenreAssetsAsync") { (genreId: String, promise: Promise) in
+      let query = MPMediaQuery.songs()
+      let predicate = MPMediaPropertyPredicate(value: UInt64(genreId), forProperty: MPMediaItemPropertyGenrePersistentID)
+      query.addFilterPredicate(predicate)
 
       guard let items = query.items else {
         promise.resolve([])
         return
       }
 
-      var songs: [[String: Any]] = []
+      let assets = items.map { item -> [String: Any] in
+        return formatSongFromMediaItem(item)
+      }
+      promise.resolve(assets)
+    }
+    
+    AsyncFunction("getAssetsAsync") { (options: [String: Any]?, promise: Promise) in
+      let query = MPMediaQuery.songs() // Fetch all audio files by default
 
-      for item in items {
-        songs.append(formatSongFromMediaItem(item))
+      // Handle album filter
+      if let albumRef = options?["album"] as? String {
+        let albumPredicate = MPMediaPropertyPredicate(value: UInt64(albumRef), forProperty: MPMediaItemPropertyAlbumPersistentID)
+        query.addFilterPredicate(albumPredicate)
       }
 
-      promise.resolve(songs)
+      guard var items = query.items else {
+        promise.resolve([])
+        return
+      }
+
+      // Handle sorting - since iOS MPMediaQuery does not allow direct sorting, we do it post-fetch
+      if let sortBy = options?["sortBy"] as? [[String: Any]] {
+        for sortOption in sortBy {
+          let sortKey = sortOption["key"] as? String
+          let ascending = sortOption["ascending"] as? Bool ?? false
+
+          switch sortKey {
+          case "creationTime":
+            items.sort { ascending ? $0.dateAdded < $1.dateAdded : $0.dateAdded > $1.dateAdded }
+          case "modificationTime":
+            items.sort { ascending ? $0.lastPlayedDate ?? Date() < $1.lastPlayedDate ?? Date() : $0.lastPlayedDate ?? Date() > $1.lastPlayedDate ?? Date() }
+          case "duration":
+            items.sort { ascending ? $0.playbackDuration < $1.playbackDuration : $0.playbackDuration > $1.playbackDuration }
+          default:
+            break
+          }
+        }
+      }
+
+      // Handle createdAfter and createdBefore filters manually after fetching the assets
+      if let createdAfter = options?["createdAfter"] as? TimeInterval {
+        let date = Date(timeIntervalSince1970: createdAfter / 1000)
+        items = items.filter { $0.dateAdded >= date }
+      }
+
+      if let createdBefore = options?["createdBefore"] as? TimeInterval {
+        let date = Date(timeIntervalSince1970: createdBefore / 1000)
+        items = items.filter { $0.dateAdded <= date }
+      }
+
+      // Handle pagination - limiting to "first" number of items
+      if let first = options?["first"] as? Int {
+        items = Array(items.prefix(first))
+      }
+
+      // Convert the MPMediaItems to the format expected by JavaScript
+      let assets = items.map { item -> [String: Any] in
+        return formatSongFromMediaItem(item)
+      }
+
+      promise.resolve(assets)
     }
 
     OnStartObserving {
-      allAssetsFetchResult = getAllAssets()
-      let delegate = PhotoLibraryObserver(handler: self)
+      let delegate = MusicLibraryObserver(handler: self)
       self.changeDelegate = delegate
-      PHPhotoLibrary.shared().register(delegate)
+      NotificationCenter.default.addObserver(self, selector: #selector(handleMusicLibraryChange), name: .MPMediaLibraryDidChange, object: nil)
+      MPMediaLibrary.default().beginGeneratingLibraryChangeNotifications()
     }
 
     OnStopObserving {
-      changeDelegate = nil
-      allAssetsFetchResult = nil
-    }
-  }
-
-  private func resolveImage(asset: PHAsset, options: AssetInfoOptions, promise: Promise) {
-    var result = exportAssetInfo(asset: asset) ?? [:]
-    let imageOptions = PHContentEditingInputRequestOptions()
-    imageOptions.isNetworkAccessAllowed = options.shouldDownloadFromNetwork
-
-    asset.requestContentEditingInput(with: imageOptions) { contentInput, info in
-      result["localUri"] = contentInput?.fullSizeImageURL?.absoluteString
-      result["orientation"] = contentInput?.fullSizeImageOrientation
-      if !options.shouldDownloadFromNetwork {
-        result["isNetworkAsset"] = info[PHContentEditingInputResultIsInCloudKey] ?? false
-      }
-
-      if let url = contentInput?.fullSizeImageURL, let ciImage = CIImage(contentsOf: url) {
-        result["exif"] = ciImage.properties
-      }
-      promise.resolve(result)
-    }
-  }
-
-  private func resolveVideo(asset: PHAsset, options: AssetInfoOptions, promise: Promise) {
-    var result = exportAssetInfo(asset: asset) ?? [:]
-    let videoOptions = PHVideoRequestOptions()
-    videoOptions.isNetworkAccessAllowed = options.shouldDownloadFromNetwork
-
-    PHImageManager.default().requestAVAsset(forVideo: asset, options: videoOptions) { asset, _, info in
-      guard let asset = asset as? AVComposition else {
-        let urlAsset = asset as? AVURLAsset
-        result["localUri"] = urlAsset?.url.absoluteString
-        if !options.shouldDownloadFromNetwork {
-          result["isNetworkAsset"] = info?[PHImageResultIsInCloudKey] ?? false
-        }
-        promise.resolve(result)
-        return
-      }
-
-      let directory = self.appContext?.config.cacheDirectory?.appendingPathComponent("MediaLibrary")
-      FileSystemUtilities.ensureDirExists(at: directory)
-      let videoOutputFileName = "slowMoVideo-\(Int.random(in: 0...999)).mov"
-      guard let videoFileOutputPath = directory?.appendingPathComponent(videoOutputFileName) else {
-        promise.reject(InvalidPathException())
-        return
-      }
-
-      let videoFileOutputURL = URL(string: videoFileOutputPath.path)
-
-      let exporter = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality)
-      exporter?.outputURL = videoFileOutputURL
-      exporter?.outputFileType = AVFileType.mov
-      exporter?.shouldOptimizeForNetworkUse = true
-
-      exporter?.exportAsynchronously {
-        switch exporter?.status {
-        case .completed:
-          result["localUri"] = videoFileOutputURL?.absoluteString
-          if !options.shouldDownloadFromNetwork {
-            result["isNetworkAsset"] = info?[PHImageResultIsInCloudKey] ?? false
-          }
-
-          promise.resolve(result)
-        case .failed:
-          promise.reject(ExportSessionFailedException())
-        case .cancelled:
-          promise.reject(ExportSessionCancelledException())
-        default:
-          promise.reject(ExportSessionUnknownException())
-        }
-      }
+      self.changeDelegate = nil
+      NotificationCenter.default.removeObserver(self, name: .MPMediaLibraryDidChange, object: nil)
+      MPMediaLibrary.default().endGeneratingLibraryChangeNotifications()
     }
   }
 
@@ -614,61 +342,20 @@ public class MusicLibraryModule: Module, PhotoLibraryObserverHandler {
     appContext?.permissions?.getPermissionUsingRequesterClass(
       MusicLibraryPermissionRequester.self,
       resolve: { result in
-        if let permissions = result as? [String: Any] {
-          if permissions["status"] as? String != "granted" {
-            reject("E_NO_PERMISSIONS", "MUSIC_LIBRARY permission is required to do this operation.", nil)
-            return
-          }
-          if permissions["accessPrivileges"] as? String != "all" {
-            reject("E_NO_PERMISSIONS", "MUSIC_LIBRARY permission is required to do this operation.", nil)
-            return
-          }
+        if let permissions = result as? [String: Any], permissions["status"] as? String == "granted" {
           block()
+        } else {
+          reject("E_NO_PERMISSIONS", "MUSIC_LIBRARY permission is required to do this operation.", nil)
         }
       },
-      reject: reject)
+      reject: reject
+    )
   }
-
-  func didChange(_ changeInstance: PHChange) {
-    if let allAssetsFetchResult {
-      let changeDetails = changeInstance.changeDetails(for: allAssetsFetchResult)
-
-      if let changeDetails {
-        self.allAssetsFetchResult = changeDetails.fetchResultAfterChanges
-
-        if changeDetails.hasIncrementalChanges && !changeDetails.insertedObjects.isEmpty || !changeDetails.removedObjects.isEmpty {
-          var insertedAssets = [[String: Any?]?]()
-          var deletedAssets = [[String: Any?]?]()
-          var updatedAssets = [[String: Any?]?]()
-          let body: [String: Any] = [
-            "hasIncrementalChanges": true,
-            "insertedAssets": insertedAssets,
-            "deletedAssets": deletedAssets,
-            "updatedAssets": updatedAssets
-          ]
-
-          for asset in changeDetails.insertedObjects {
-            insertedAssets.append(exportAsset(asset: asset))
-          }
-
-          for asset in changeDetails.removedObjects {
-            deletedAssets.append(exportAsset(asset: asset))
-          }
-
-          for asset in changeDetails.changedObjects {
-            updatedAssets.append(exportAsset(asset: asset))
-          }
-
-          sendEvent("musicLibraryDidChange", body)
-          return
-        }
-
-        if !changeDetails.hasIncrementalChanges {
-          sendEvent("musicLibraryDidChange", [
-            "hasIncrementalChanges": false
-          ])
-        }
-      }
-    }
+  
+  @objc
+  private func handleMusicLibraryChange() {
+    sendEvent("musicLibraryDidChange", [
+      "hasIncrementalChanges": true
+    ])
   }
 }

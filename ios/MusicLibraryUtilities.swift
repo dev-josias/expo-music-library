@@ -5,33 +5,32 @@ import CoreServices
 import MediaPlayer
 
 func formatSongFromMediaItem(_ item: MPMediaItem) -> [String: Any] {
-  let songId = "\(item.persistentID)"
-  let filename = item.title ?? "Unknown"
-  let title = item.title ?? "Unknown Title"
-  let artist = item.artist ?? "Unknown Artist"
-  let artwork = item.artwork?.image(at: CGSize(width: 100, height: 100))?.pngData()?.base64EncodedString() ?? ""
-  let uri = item.assetURL?.absoluteString ?? ""
-  let duration = item.playbackDuration
-  let creationTime = item.releaseDate?.timeIntervalSince1970 ?? 0
-  let modificationTime = item.lastPlayedDate?.timeIntervalSince1970 ?? 0
-
   return [
-    "id": songId,
-    "filename": filename,
-    "title": title,
-    "artwork": artwork,
-    "artist": artist,
-    "uri": uri,
-    "mediaType": "audio",
-    "width": 0,
-    "height": 0,
-    "creationTime": creationTime,
-    "modificationTime": modificationTime,
-    "duration": duration,
-    "albumId": item.albumPersistentID != 0 ? "\(item.albumPersistentID)" : "",
-    "artistId": "\(item.artistPersistentID)",
-    "genreId": item.genrePersistentID != 0 ? "\(item.genrePersistentID)" : ""
+    "id": "\(item.persistentID)",
+    "title": item.title ?? "Unknown Title",
+    "artist": item.artist ?? "Unknown Artist",
+    "duration": item.playbackDuration,
+    "uri": item.assetURL?.absoluteString ?? "",
+    "albumTitle": item.albumTitle ?? "Unknown Album",
+    "artwork": getArtwork(item) ?? ""
   ]
+}
+
+func getArtwork(_ item: MPMediaItem?) -> String? {
+  var artworkBase64: String? = nil
+
+  if let artwork = item?.artwork {
+    let artworkImage = artwork.image(at: CGSize(width: 100, height: 100))
+
+    if let artworkData = artworkImage?.jpegData(compressionQuality: 0.8) {
+      artworkBase64 = artworkData.base64EncodedString()
+    }
+  } else {
+    return ""
+  }
+  
+  return artworkBase64
+
 }
 
 func stringify(mediaType: PHAssetMediaType) -> String {

@@ -31,15 +31,13 @@ export default function App() {
           return;
         }
 
-        const assets = await ExpoMusicLibrary.getAssetsAsync({
-          sortBy: ["creationTime"],
-        });
+        const assets = await ExpoMusicLibrary.getAssetsAsync();
         const results = await ExpoMusicLibrary.getFoldersAsync();
         const artists = await ExpoMusicLibrary.getArtistsAsync();
 
         console.log("assets", assets);
-        console.log(results);
-        console.log(artists);
+        console.log("folders", results);
+        console.log("artists", artists);
         setLoading(false);
       } catch (err) {
         console.log(err);

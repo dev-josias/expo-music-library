@@ -36,7 +36,7 @@ PODS:
     - ReactCommon/turbomodule/bridging
     - ReactCommon/turbomodule/core
     - Yoga
-  - ExpoMusicLibrary (1.1.7):
+  - ExpoMusicLibrary (1.1.8):
     - ExpoModulesCore
   - FBLazyVector (0.74.5)
   - fmt (9.1.0)
@@ -1411,7 +1411,7 @@ SPEC CHECKSUMS:
   ExpoFont: e7f2275c10ca8573c991e007329ad6bf98086485
   ExpoKeepAwake: 3b8815d9dd1d419ee474df004021c69fdd316d08
   ExpoModulesCore: 5440e96a8ee014f4fd88e77264985fd0a65f5f8c
-  ExpoMusicLibrary: 77897e1a5ee5ce0fbde83a9cd7b0bc94d99a53ec
+  ExpoMusicLibrary: f1d28bf4b7ae4fdeb32fd7d541de23e4be28bf28
   FBLazyVector: ac12dc084d1c8ec4cc4d7b3cf1b0ebda6dab85af
   fmt: 4c2741a687cc09f0634a2e2c72a838b99f1ff120
   glog: fdfdfe5479092de0c4bdbebedd9056951f092c4f
