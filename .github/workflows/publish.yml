@@ -2,11 +2,9 @@ name: 📦 Publish to npm
 
 on:
   push:
-    branches:
-      - main # or '*' for every branch
     tags:
-      - "v*.*.*" # still fire when you push a semver tag
-  workflow_dispatch: # manual trigger, too
+      - "v*.*.*"
+  workflow_dispatch:
 
 jobs:
   publish:
