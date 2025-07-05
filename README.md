@@ -172,7 +172,7 @@ If you have any questions or issues, feel free to open an issue on the GitHub re
 
 - **Author**: Kologo Josias
 - **Email**: kologojosias@gmail.com
-- **GitHub**: Josias1997
+- **GitHub**: dev-josias
 
 This README was generated to help you get started with the expo-music-library module. Enjoy coding!
 
