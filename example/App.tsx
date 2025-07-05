@@ -1,3 +1,5 @@
+import * as ExpoMusicLibrary from "expo-music-library";
+import { useEffect, useState } from "react";
 import {
   StyleSheet,
   Text,
@@ -8,8 +10,6 @@ import {
   Linking,
   Platform,
 } from "react-native";
-import * as ExpoMusicLibrary from "expo-music-library";
-import { useEffect, useState } from "react";
 
 export default function App() {
   const [assets, setAssets] = useState<ExpoMusicLibrary.Asset[]>([]);
@@ -20,7 +20,7 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
-        let permissions = await ExpoMusicLibrary.requestPermissionsAsync();
+        const permissions = await ExpoMusicLibrary.requestPermissionsAsync();
         if (!permissions.granted) {
           if (permissions.canAskAgain) {
             setError("Permission to access music library is required.");

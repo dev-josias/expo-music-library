@@ -89,7 +89,7 @@ class ExpoMusicLibraryModule : Module() {
     }
 
     AsyncFunction("getFoldersAsync") { promise: Promise ->
-      throwUnlessPermissionsGranted {
+      throwUnlessPermissionsGranted(isWrite = false) {
         withModuleScope(promise) {
           GetFolders(context, promise).execute()
         }
@@ -97,7 +97,7 @@ class ExpoMusicLibraryModule : Module() {
     }
 
     AsyncFunction("getAlbumsAsync") { promise: Promise ->
-      throwUnlessPermissionsGranted {
+      throwUnlessPermissionsGranted(isWrite = false) {
         withModuleScope(promise) {
           GetAlbums(
             context, promise
@@ -106,7 +106,7 @@ class ExpoMusicLibraryModule : Module() {
       }
     }
     AsyncFunction("getAlbumAssetsAsync") { albumName: String, promise: Promise ->
-      throwUnlessPermissionsGranted {
+      throwUnlessPermissionsGranted(isWrite = false) {
         withModuleScope(promise) {
           GetAlbumAssets(context, albumName, promise).execute()
         }
@@ -114,7 +114,7 @@ class ExpoMusicLibraryModule : Module() {
     }
 
     AsyncFunction("getAssetsAsync") { assetsOptions: AssetsOptions, promise: Promise ->
-      throwUnlessPermissionsGranted {
+      throwUnlessPermissionsGranted(isWrite = false) {
         withModuleScope(promise) {
           GetAssets(context, assetsOptions, promise).execute()
         }
@@ -122,7 +122,7 @@ class ExpoMusicLibraryModule : Module() {
     }
 
     AsyncFunction("getArtistsAsync") { promise: Promise ->
-      throwUnlessPermissionsGranted {
+      throwUnlessPermissionsGranted(isWrite = false) {
         withModuleScope(promise) {
           GetArtists(context, promise).execute()
         }
@@ -130,7 +130,7 @@ class ExpoMusicLibraryModule : Module() {
     }
 
     AsyncFunction("getArtistAssetsAsync") { artistId: String, promise: Promise ->
-      throwUnlessPermissionsGranted {
+      throwUnlessPermissionsGranted(isWrite = false) {
         withModuleScope(promise) {
           GetArtistAssets(context, artistId, promise).execute()
         }
@@ -138,7 +138,7 @@ class ExpoMusicLibraryModule : Module() {
     }
 
     AsyncFunction("getGenresAsync") { promise: Promise ->
-      throwUnlessPermissionsGranted {
+      throwUnlessPermissionsGranted(isWrite = false) {
         withModuleScope(promise) {
           GetGenres(context, promise).execute()
         }
@@ -146,7 +146,7 @@ class ExpoMusicLibraryModule : Module() {
     }
 
     AsyncFunction("getGenreAssetsAsync") { genreId: String, promise: Promise ->
-      throwUnlessPermissionsGranted {
+      throwUnlessPermissionsGranted(isWrite = false) {
         withModuleScope(promise) {
           GetGenreAssets(context, genreId, promise).execute()
         }
@@ -154,7 +154,7 @@ class ExpoMusicLibraryModule : Module() {
     }
 
     AsyncFunction("getFolderAssetsAsync") { folderId: String, promise: Promise ->
-      throwUnlessPermissionsGranted {
+      throwUnlessPermissionsGranted(isWrite = false) {
         withModuleScope(promise) {
           GetFolderAssets(context, folderId, promise).execute()
         }

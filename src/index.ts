@@ -1,16 +1,11 @@
 import {
-  requireNativeModule,
-  EventEmitter,
-  Subscription,
   PermissionResponse as EXPermissionResponse,
   UnavailabilityError,
 } from "expo-modules-core";
-
-// Import the native module. On web, it will be resolved to ExpoMusicLibrary.web.ts
-// and on native platforms to ExpoMusicLibrary.ts
-import ExpoMusicLibrary from "./ExpoMusicLibraryModule";
-import { ChangeEventPayload } from "./ExpoMusicLibrary.types";
 import { Platform } from "react-native";
+
+import { ChangeEventPayload } from "./ExpoMusicLibrary.types";
+import ExpoMusicLibrary from "./ExpoMusicLibraryModule";
 
 export type PermissionResponse = EXPermissionResponse & {
   accessPrivileges?: "all" | "limited" | "none";
@@ -447,14 +442,18 @@ export async function getAssetsAsync(
   return await ExpoMusicLibrary.getAssetsAsync(options);
 }
 
-const emitter = new EventEmitter(
-  ExpoMusicLibrary ?? requireNativeModule("ExpoMusicLibrary")
-);
+const emitter = ExpoMusicLibrary as {
+  addListener: (
+    eventName: "onChange",
+    listener: (e: ChangeEventPayload) => void
+  ) => { remove: () => void };
+  removeAllListeners?: (eventName: string) => void;
+};
 
 export function addChangeListener(
   listener: (event: ChangeEventPayload) => void
-): Subscription {
-  return emitter.addListener<ChangeEventPayload>("onChange", listener);
+) {
+  return emitter.addListener("onChange", listener);
 }
 
 export { ChangeEventPayload };
