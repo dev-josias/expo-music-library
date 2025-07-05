@@ -2,36 +2,31 @@ name: 📦 Publish to npm
 
 on:
   push:
-    # only run when you push a semver tag, e.g. `v1.2.3`
+    branches:
+      - main # or '*' for every branch
     tags:
-      - "v*.*.*"
-  workflow_dispatch: # allows manual triggering in the Actions tab
+      - "v*.*.*" # still fire when you push a semver tag
+  workflow_dispatch: # manual trigger, too
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      # 1. Check out your repo
       - uses: actions/checkout@v3
 
-      # 2. Tell actions which Node version to use & point at npm
       - name: Use Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: "18" # or whatever LTS you prefer
+          node-version: "18"
           registry-url: "https://registry.npmjs.org"
 
-      # 3. Install dependencies (clean slate)
       - name: Install dependencies
         run: npm ci
 
-      # 4. Build your library (emit JS + .d.ts)
       - name: Build package
         run: npm run build
 
-      # 5. Publish to npm
       - name: Publish to npm
         run: npm publish
         env:
-          # this secret must be added in your GitHub repo settings → Secrets → Actions
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
