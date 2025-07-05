@@ -23,14 +23,14 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Josias1997/expo-music-library.git"
+    "url": "git+https://github.com/dev-josias/expo-music-library.git"
   },
   "bugs": {
-    "url": "https://github.com/Josias1997/expo-music-library/issues"
+    "url": "https://github.com/dev-josias/expo-music-library/issues"
   },
   "author": "Kologo Josias <kologojosias@gmail.com> (https://github.com/dev-josias)",
   "license": "MIT",
-  "homepage": "https://github.com/Josias1997/expo-music-library#readme",
+  "homepage": "https://github.com/dev-josias/expo-music-library#readme",
   "dependencies": {},
   "devDependencies": {
     "@types/react": "18.2.26",
