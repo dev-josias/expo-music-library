@@ -10,7 +10,6 @@ public class MusicLibraryModule: Module, MusicLibraryObserverHandler {
     sendEvent("musicLibraryDidChange", [
       "hasIncrementalChanges": true
     ])
-
   }
 
   public func definition() -> ModuleDefinition {
@@ -40,17 +39,39 @@ public class MusicLibraryModule: Module, MusicLibraryObserverHandler {
       ])
     }
 
+    // FIXED: Simplified permission checking using MPMediaLibrary directly
     AsyncFunction("getPermissionsAsync") { (writeOnly: Bool, promise: Promise) in
       self.writeOnly = writeOnly
-      appContext?
-        .permissions?
-        .getPermissionUsingRequesterClass(
-          requesterClass(writeOnly),
-          resolve: promise.resolver,
-          reject: promise.legacyRejecter
-        )
+      let status = MPMediaLibrary.authorizationStatus()
+      let photoStatus = PHPhotoLibrary.authorizationStatus()
+      
+      var permissionStatus: String
+      var granted = false
+      
+      switch status {
+      case .authorized:
+        permissionStatus = "granted"
+        granted = true
+      case .denied, .restricted:
+        permissionStatus = "denied"
+      case .notDetermined:
+        permissionStatus = "undetermined"
+      @unknown default:
+        permissionStatus = "undetermined"
+      }
+      
+      let result: [String: Any] = [
+        "status": permissionStatus,
+        "granted": granted,
+        "canAccessAllFiles": granted,
+        "accessPrivileges": granted ? "all" : "none",
+        "artworkAccess": photoStatus == .authorized
+      ]
+      
+      promise.resolve(result)
     }
 
+    // FIXED: Direct MPMediaLibrary permission request
     AsyncFunction("requestPermissionsAsync") { [weak self] (writeOnly: Bool, promise: Promise) in
       guard let self = self else {
         promise.reject("E_SELF_DEALLOCATED", "Self was deallocated.")
@@ -58,78 +79,62 @@ public class MusicLibraryModule: Module, MusicLibraryObserverHandler {
       }
 
       self.writeOnly = writeOnly
-      let mediaLibraryStatus = MPMediaLibrary.authorizationStatus()
-
-      switch mediaLibraryStatus {
-      case .authorized:
-        self.appContext?
-          .permissions?
-          .askForPermission(
-            usingRequesterClass: requesterClass(writeOnly),
-            resolve: promise.resolver,
-            reject: promise.legacyRejecter
-          )
-        
-      case .notDetermined:
-        MPMediaLibrary.requestAuthorization { [weak self] newStatus in
-          guard let self = self else {
-            promise.reject("E_SELF_DEALLOCATED", "Self was deallocated.")
-            return
-          }
-          DispatchQueue.main.async {
-            if newStatus == .authorized {
-              self.appContext?
-                .permissions?
-                .askForPermission(
-                  usingRequesterClass: requesterClass(writeOnly),
-                  resolve: promise.resolver,
-                  reject: promise.legacyRejecter
-                )
-            } else {
-              promise.reject("E_NO_MUSIC_LIBRARY_PERMISSION", "Music Library access is required but was not granted.")
+      
+      MPMediaLibrary.requestAuthorization { status in
+        DispatchQueue.main.async {
+          // Also request photo permission for artwork access
+          PHPhotoLibrary.requestAuthorization { photoStatus in
+            DispatchQueue.main.async {
+              var permissionStatus: String
+              var granted = false
+              
+              switch status {
+              case .authorized:
+                permissionStatus = "granted"
+                granted = true
+              case .denied, .restricted:
+                permissionStatus = "denied"
+              case .notDetermined:
+                permissionStatus = "undetermined"
+              @unknown default:
+                permissionStatus = "undetermined"
+              }
+              
+              let result: [String: Any] = [
+                "status": permissionStatus,
+                "granted": granted,
+                "canAccessAllFiles": granted,
+                "accessPrivileges": granted ? "all" : "none",
+                "artworkAccess": photoStatus == .authorized
+              ]
+              
+              promise.resolve(result)
             }
           }
         }
-        
-      case .denied, .restricted:
-        promise.reject("E_NO_MUSIC_LIBRARY_PERMISSION", "Music Library access is required but was not granted.")
-        
-      @unknown default:
-        promise.reject("E_UNKNOWN", "An unknown error occurred while requesting media library permissions.")
       }
     }
 
+    // FIXED: Music files cannot be programmatically added to iOS Music Library
     AsyncFunction("createAssetAsync") { (uri: URL, promise: Promise) in
-      if !checkPermissions(promise: promise) {
-        return
-      }
-
-      if uri.pathExtension.isEmpty || uri.pathExtension.lowercased() != "mp3" {
-        promise.reject(UnsupportedAssetTypeException(uri.absoluteString))
-        return
-      }
-
-      if !FileSystemUtilities.permissions(appContext, for: uri).contains(.read) {
-        promise.reject(UnreadableAssetException(uri.absoluteString))
-        return
-      }
-
-      var assetPlaceholder: PHObjectPlaceholder?
-      PHPhotoLibrary.shared().performChanges {
-        let changeRequest = PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: uri) // Modified for audio creation
-        
-        assetPlaceholder = changeRequest?.placeholderForCreatedAsset
-      } completionHandler: { success, error in
-        if success {
-          let asset = getAssetBy(id: assetPlaceholder?.localIdentifier)
-          promise.resolve(exportAsset(asset: asset))
-        } else {
-          promise.reject(SaveAssetException(error))
-        }
-      }
+      // IMPORTANT: iOS does not allow apps to programmatically add files to the Music Library
+      // This is a security restriction by Apple - users must manually import music through:
+      // - iTunes/Music app
+      // - Files app -> Share -> Add to Music
+      // - Third-party apps with special entitlements
+      
+      promise.reject(
+        "E_UNSUPPORTED_OPERATION",
+        "iOS does not allow programmatic addition of music files to the Music Library. Users must import music manually through the Music app or Files app."
+      )
     }
 
     AsyncFunction("getFoldersAsync") { (promise: Promise) in
+      if MPMediaLibrary.authorizationStatus() != .authorized {
+        promise.reject("E_NO_MUSIC_LIBRARY_PERMISSION", "Music Library permission required")
+        return
+      }
+      
       let query = MPMediaQuery.playlists()
       let collections = query.collections ?? []
       let folders = collections.map { playlist -> [String: Any] in
@@ -142,9 +147,16 @@ public class MusicLibraryModule: Module, MusicLibraryObserverHandler {
     }
 
     AsyncFunction("getFolderAssetsAsync") { (folderId: String, promise: Promise) in
+      if MPMediaLibrary.authorizationStatus() != .authorized {
+        promise.reject("E_NO_MUSIC_LIBRARY_PERMISSION", "Music Library permission required")
+        return
+      }
+      
       let query = MPMediaQuery.songs()
-      let predicate = MPMediaPropertyPredicate(value: UInt64(folderId), forProperty: MPMediaPlaylistPropertyPersistentID)
-      query.addFilterPredicate(predicate)
+      if let folderIdUInt = UInt64(folderId) {
+        let predicate = MPMediaPropertyPredicate(value: folderIdUInt, forProperty: MPMediaPlaylistPropertyPersistentID)
+        query.addFilterPredicate(predicate)
+      }
       
       guard let items = query.items else {
         promise.resolve([])
@@ -158,6 +170,11 @@ public class MusicLibraryModule: Module, MusicLibraryObserverHandler {
     }
 
     AsyncFunction("getAlbumsAsync") { (promise: Promise) in
+      if MPMediaLibrary.authorizationStatus() != .authorized {
+        promise.reject("E_NO_MUSIC_LIBRARY_PERMISSION", "Music Library permission required")
+        return
+      }
+      
       let query = MPMediaQuery.albums()
       guard let collections = query.collections else {
         promise.resolve([])
@@ -168,6 +185,8 @@ public class MusicLibraryModule: Module, MusicLibraryObserverHandler {
         return [
           "id": "\(album.persistentID)",
           "title": album.representativeItem?.albumTitle ?? "Unknown Album",
+          "assetCount": album.count,
+          "albumSongs": album.count,
           "artist": album.representativeItem?.artist ?? "Unknown Artist",
           "artwork": getArtwork(album.representativeItem) ?? ""
         ]
@@ -176,9 +195,16 @@ public class MusicLibraryModule: Module, MusicLibraryObserverHandler {
     }
 
     AsyncFunction("getAlbumAssetsAsync") { (albumId: String, promise: Promise) in
+      if MPMediaLibrary.authorizationStatus() != .authorized {
+        promise.reject("E_NO_MUSIC_LIBRARY_PERMISSION", "Music Library permission required")
+        return
+      }
+      
       let query = MPMediaQuery.songs()
-      let predicate = MPMediaPropertyPredicate(value: UInt64(albumId), forProperty: MPMediaItemPropertyAlbumPersistentID)
-      query.addFilterPredicate(predicate)
+      if let albumIdUInt = UInt64(albumId) {
+        let predicate = MPMediaPropertyPredicate(value: albumIdUInt, forProperty: MPMediaItemPropertyAlbumPersistentID)
+        query.addFilterPredicate(predicate)
+      }
       
       guard let items = query.items else {
         promise.resolve([])
@@ -192,6 +218,11 @@ public class MusicLibraryModule: Module, MusicLibraryObserverHandler {
     }
 
     AsyncFunction("getArtistsAsync") { (promise: Promise) in
+      if MPMediaLibrary.authorizationStatus() != .authorized {
+        promise.reject("E_NO_MUSIC_LIBRARY_PERMISSION", "Music Library permission required")
+        return
+      }
+      
       let query = MPMediaQuery.artists()
       guard let collections = query.collections else {
         promise.resolve([])
@@ -201,16 +232,25 @@ public class MusicLibraryModule: Module, MusicLibraryObserverHandler {
       let artists = collections.map { artist -> [String: Any] in
         return [
           "id": "\(artist.persistentID)",
-          "title": artist.representativeItem?.artist ?? "Unknown Artist"
+          "title": artist.representativeItem?.artist ?? "Unknown Artist",
+          "assetCount": artist.count,
+          "albumSongs": artist.count
         ]
       }
       promise.resolve(artists)
     }
 
     AsyncFunction("getArtistAssetsAsync") { (artistId: String, promise: Promise) in
+      if MPMediaLibrary.authorizationStatus() != .authorized {
+        promise.reject("E_NO_MUSIC_LIBRARY_PERMISSION", "Music Library permission required")
+        return
+      }
+      
       let query = MPMediaQuery.songs()
-      let predicate = MPMediaPropertyPredicate(value: UInt64(artistId), forProperty: MPMediaItemPropertyArtistPersistentID)
-      query.addFilterPredicate(predicate)
+      if let artistIdUInt = UInt64(artistId) {
+        let predicate = MPMediaPropertyPredicate(value: artistIdUInt, forProperty: MPMediaItemPropertyArtistPersistentID)
+        query.addFilterPredicate(predicate)
+      }
 
       guard let items = query.items else {
         promise.resolve([])
@@ -224,6 +264,11 @@ public class MusicLibraryModule: Module, MusicLibraryObserverHandler {
     }
 
     AsyncFunction("getGenresAsync") { (promise: Promise) in
+      if MPMediaLibrary.authorizationStatus() != .authorized {
+        promise.reject("E_NO_MUSIC_LIBRARY_PERMISSION", "Music Library permission required")
+        return
+      }
+      
       let query = MPMediaQuery.genres()
       guard let collections = query.collections else {
         promise.resolve([])
@@ -240,9 +285,16 @@ public class MusicLibraryModule: Module, MusicLibraryObserverHandler {
     }
 
     AsyncFunction("getGenreAssetsAsync") { (genreId: String, promise: Promise) in
+      if MPMediaLibrary.authorizationStatus() != .authorized {
+        promise.reject("E_NO_MUSIC_LIBRARY_PERMISSION", "Music Library permission required")
+        return
+      }
+      
       let query = MPMediaQuery.songs()
-      let predicate = MPMediaPropertyPredicate(value: UInt64(genreId), forProperty: MPMediaItemPropertyGenrePersistentID)
-      query.addFilterPredicate(predicate)
+      if let genreIdUInt = UInt64(genreId) {
+        let predicate = MPMediaPropertyPredicate(value: genreIdUInt, forProperty: MPMediaItemPropertyGenrePersistentID)
+        query.addFilterPredicate(predicate)
+      }
 
       guard let items = query.items else {
         promise.resolve([])
@@ -255,40 +307,62 @@ public class MusicLibraryModule: Module, MusicLibraryObserverHandler {
       promise.resolve(assets)
     }
     
+    // FIXED: Complete rewrite of getAssetsAsync with proper pagination
     AsyncFunction("getAssetsAsync") { (options: [String: Any]?, promise: Promise) in
-      let query = MPMediaQuery.songs() // Fetch all audio files by default
+      if MPMediaLibrary.authorizationStatus() != .authorized {
+        promise.reject("E_NO_MUSIC_LIBRARY_PERMISSION", "Music Library permission required")
+        return
+      }
+      
+      let query = MPMediaQuery.songs()
 
       // Handle album filter
-      if let albumRef = options?["album"] as? String {
-        let albumPredicate = MPMediaPropertyPredicate(value: UInt64(albumRef), forProperty: MPMediaItemPropertyAlbumPersistentID)
+      if let albumRef = options?["album"] as? String,
+         let albumIdUInt = UInt64(albumRef) {
+        let albumPredicate = MPMediaPropertyPredicate(value: albumIdUInt, forProperty: MPMediaItemPropertyAlbumPersistentID)
         query.addFilterPredicate(albumPredicate)
       }
 
       guard var items = query.items else {
-        promise.resolve([])
+        let emptyResponse: [String: Any] = [
+          "assets": [],
+          "endCursor": "",
+          "hasNextPage": false,
+          "totalCount": 0
+        ]
+        promise.resolve(emptyResponse)
         return
       }
 
-      // Handle sorting - since iOS MPMediaQuery does not allow direct sorting, we do it post-fetch
-      if let sortBy = options?["sortBy"] as? [[String: Any]] {
-        for sortOption in sortBy {
-          let sortKey = sortOption["key"] as? String
-          let ascending = sortOption["ascending"] as? Bool ?? false
+      // FIXED: Handle sorting properly - expecting array of strings like ["duration DESC", "creationTime ASC"]
+      if let sortByArray = options?["sortBy"] as? [String] {
+        for sortString in sortByArray {
+          let components = sortString.components(separatedBy: " ")
+          let key = components[0]
+          let ascending = components.count > 1 && components[1] == "ASC"
 
-          switch sortKey {
+          switch key {
           case "creationTime":
-            items.sort { ascending ? $0.dateAdded < $1.dateAdded : $0.dateAdded > $1.dateAdded }
+            items.sort { item1, item2 in
+              return ascending ? item1.dateAdded < item2.dateAdded : item1.dateAdded > item2.dateAdded
+            }
           case "modificationTime":
-            items.sort { ascending ? $0.lastPlayedDate ?? Date() < $1.lastPlayedDate ?? Date() : $0.lastPlayedDate ?? Date() > $1.lastPlayedDate ?? Date() }
+            items.sort { item1, item2 in
+              let date1 = item1.lastPlayedDate ?? Date(timeIntervalSince1970: 0)
+              let date2 = item2.lastPlayedDate ?? Date(timeIntervalSince1970: 0)
+              return ascending ? date1 < date2 : date1 > date2
+            }
           case "duration":
-            items.sort { ascending ? $0.playbackDuration < $1.playbackDuration : $0.playbackDuration > $1.playbackDuration }
+            items.sort { item1, item2 in
+              return ascending ? item1.playbackDuration < item2.playbackDuration : item1.playbackDuration > item2.playbackDuration
+            }
           default:
             break
           }
         }
       }
 
-      // Handle createdAfter and createdBefore filters manually after fetching the assets
+      // Handle date filters
       if let createdAfter = options?["createdAfter"] as? TimeInterval {
         let date = Date(timeIntervalSince1970: createdAfter / 1000)
         items = items.filter { $0.dateAdded >= date }
@@ -299,57 +373,60 @@ public class MusicLibraryModule: Module, MusicLibraryObserverHandler {
         items = items.filter { $0.dateAdded <= date }
       }
 
-      // Handle pagination - limiting to "first" number of items
-      if let first = options?["first"] as? Int {
-        items = Array(items.prefix(first))
+      // FIXED: Handle pagination properly
+      let first = options?["first"] as? Int ?? 20
+      let after = options?["after"] as? String
+      
+      var startIndex = 0
+      if let after = after, let afterId = UInt64(after) {
+        if let foundIndex = items.firstIndex(where: { $0.persistentID == afterId }) {
+          startIndex = foundIndex + 1
+        }
       }
-
-      // Convert the MPMediaItems to the format expected by JavaScript
-      let assets = items.map { item -> [String: Any] in
+      
+      let endIndex = min(startIndex + first, items.count)
+      let paginatedItems = startIndex < items.count ? Array(items[startIndex..<endIndex]) : []
+      
+      let assets = paginatedItems.map { item -> [String: Any] in
         return formatSongFromMediaItem(item)
       }
+      
+      let response: [String: Any] = [
+        "assets": assets,
+        "endCursor": paginatedItems.last.map { "\($0.persistentID)" } ?? after ?? "",
+        "hasNextPage": endIndex < items.count,
+        "totalCount": items.count
+      ]
 
-      promise.resolve(assets)
+      promise.resolve(response)
     }
 
     OnStartObserving {
       let delegate = MusicLibraryObserver(handler: self)
       self.changeDelegate = delegate
-      NotificationCenter.default.addObserver(self, selector: #selector(handleMusicLibraryChange), name: .MPMediaLibraryDidChange, object: nil)
-      MPMediaLibrary.default().beginGeneratingLibraryChangeNotifications()
     }
 
     OnStopObserving {
       self.changeDelegate = nil
-      NotificationCenter.default.removeObserver(self, name: .MPMediaLibraryDidChange, object: nil)
-      MPMediaLibrary.default().endGeneratingLibraryChangeNotifications()
     }
   }
 
+  // FIXED: Simplified permission check
   private func checkPermissions(promise: Promise) -> Bool {
-    guard let permissions = appContext?.permissions else {
-      promise.reject(MusicLibraryPermissionsException())
-      return false
-    }
-    if !permissions.hasGrantedPermission(usingRequesterClass: requesterClass(self.writeOnly)) {
+    if MPMediaLibrary.authorizationStatus() != .authorized {
       promise.reject(MusicLibraryPermissionsException())
       return false
     }
     return true
   }
 
+  // Keep for backwards compatibility but not used in new code
   private func runIfAllPermissionsWereGranted(reject: @escaping EXPromiseRejectBlock, block: @escaping () -> Void) {
-    appContext?.permissions?.getPermissionUsingRequesterClass(
-      MusicLibraryPermissionRequester.self,
-      resolve: { result in
-        if let permissions = result as? [String: Any], permissions["status"] as? String == "granted" {
-          block()
-        } else {
-          reject("E_NO_PERMISSIONS", "MUSIC_LIBRARY permission is required to do this operation.", nil)
-        }
-      },
-      reject: reject
-    )
+    if MPMediaLibrary.authorizationStatus() == .authorized {
+      block()
+    } else {
+      reject("E_NO_PERMISSIONS", "MUSIC_LIBRARY permission is required to do this operation.", nil)
+    }
   }
   
   @objc

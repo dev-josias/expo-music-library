@@ -1,97 +1,161 @@
 import ExpoModulesCore
+import MediaPlayer
 import Photos
 
-public class MusicLibraryPermissionRequester: DefaultMusicLibraryPermissionRequester, EXPermissionsRequester {
+public class MusicLibraryPermissionRequester: NSObject, EXPermissionsRequester {
   public static func permissionType() -> String {
     return "musicLibrary"
   }
-}
-
-public class MusicLibraryWriteOnlyPermissionRequester: DefaultMusicLibraryPermissionRequester, EXPermissionsRequester {
-  public static func permissionType() -> String {
-    return "musicLibraryWriteOnly"
-  }
-
-  @available(iOS 14, *)
-  override internal func accessLevel() -> PHAccessLevel {
-    return PHAccessLevel.addOnly
-  }
-}
-
-public class DefaultMusicLibraryPermissionRequester: NSObject {}
-
-extension DefaultMusicLibraryPermissionRequester {
+  
   @objc
   public func requestPermissions(resolver resolve: @escaping EXPromiseResolveBlock, rejecter reject: EXPromiseRejectBlock) {
-      if #available(iOS 14, *) {
-          let authorizationHandler = { (_: PHAuthorizationStatus) in
-              resolve(self.getPermissions())
+    // Request Music Library permission first
+    MPMediaLibrary.requestAuthorization { musicStatus in
+      DispatchQueue.main.async {
+        // Also request Photo Library permission for artwork access
+        PHPhotoLibrary.requestAuthorization { photoStatus in
+          DispatchQueue.main.async {
+            resolve(self.getPermissions())
           }
-          PHPhotoLibrary.requestAuthorization(for: self.accessLevel(), handler: authorizationHandler)
-      } else {
-          PHPhotoLibrary.requestAuthorization { (_: PHAuthorizationStatus) in
-              resolve(self.getPermissions())
-          }
+        }
       }
+    }
   }
 
   @objc
   public func getPermissions() -> [AnyHashable: Any] {
-      if #available(iOS 14, *) {
-          let authorizationStatus = PHPhotoLibrary.authorizationStatus(for: self.accessLevel())
-          var status: EXPermissionStatus
-          var scope: String
+    let musicAuthStatus = MPMediaLibrary.authorizationStatus()
+    let photoAuthStatus = PHPhotoLibrary.authorizationStatus()
+    
+    var status: EXPermissionStatus
+    var scope: String
+    
+    // Primary permission is based on Music Library access
+    switch musicAuthStatus {
+    case .authorized:
+      status = EXPermissionStatusGranted
+      scope = "all"
+    case .denied, .restricted:
+      status = EXPermissionStatusDenied
+      scope = "none"
+    case .notDetermined:
+      fallthrough
+    @unknown default:
+      status = EXPermissionStatusUndetermined
+      scope = "none"
+    }
 
-          switch authorizationStatus {
-          case .authorized:
-              status = EXPermissionStatusGranted
-              scope = "all"
-          case .limited:
-              status = EXPermissionStatusGranted
-              scope = "limited"
-          case .denied, .restricted:
-              status = EXPermissionStatusDenied
-              scope = "none"
-          case .notDetermined:
-              fallthrough
-          @unknown default:
-              status = EXPermissionStatusUndetermined
-              scope = "none"
-          }
+    return [
+      "status": status.rawValue,
+      "accessPrivileges": scope,
+      "granted": status == EXPermissionStatusGranted,
+      "canAccessAllFiles": status == EXPermissionStatusGranted,
+      "artworkAccess": photoAuthStatus == .authorized
+    ]
+  }
+}
 
-          return [
-              "status": status.rawValue,
-              "accessPrivileges": scope,
-              "granted": status == EXPermissionStatusGranted
-          ]
-      } else {
-          // For iOS 13.4 and 13.5
-          let authorizationStatus = PHPhotoLibrary.authorizationStatus()
-          var status: EXPermissionStatus
-          let scope = "all" // iOS 13 doesn't have limited access
-
-          switch authorizationStatus {
-          case .authorized:
-              status = EXPermissionStatusGranted
-          case .denied, .restricted:
-              status = EXPermissionStatusDenied
-          case .notDetermined:
-              fallthrough
-          @unknown default:
-              status = EXPermissionStatusUndetermined
-          }
-
-          return [
-              "status": status.rawValue,
-              "accessPrivileges": scope,
-              "granted": status == EXPermissionStatusGranted
-          ]
+public class MusicLibraryWriteOnlyPermissionRequester: NSObject, EXPermissionsRequester {
+  public static func permissionType() -> String {
+    return "musicLibraryWriteOnly"
+  }
+  
+  @objc
+  public func requestPermissions(resolver resolve: @escaping EXPromiseResolveBlock, rejecter reject: EXPromiseRejectBlock) {
+    // For music library, "write only" doesn't really apply since iOS doesn't allow
+    // programmatic addition of music files. This is the same as regular permission.
+    MPMediaLibrary.requestAuthorization { musicStatus in
+      DispatchQueue.main.async {
+        resolve(self.getPermissions())
       }
+    }
   }
 
-  @available(iOS 14, *)
   @objc
-  internal func accessLevel() -> PHAccessLevel {
-    return PHAccessLevel.readWrite
+  public func getPermissions() -> [AnyHashable: Any] {
+    let musicAuthStatus = MPMediaLibrary.authorizationStatus()
+    
+    var status: EXPermissionStatus
+    var scope: String
+    
+    switch musicAuthStatus {
+    case .authorized:
+      status = EXPermissionStatusGranted
+      scope = "all"
+    case .denied, .restricted:
+      status = EXPermissionStatusDenied
+      scope = "none"
+    case .notDetermined:
+      fallthrough
+    @unknown default:
+      status = EXPermissionStatusUndetermined
+      scope = "none"
+    }
+
+    return [
+      "status": status.rawValue,
+      "accessPrivileges": scope,
+      "granted": status == EXPermissionStatusGranted,
+      "canAccessAllFiles": status == EXPermissionStatusGranted
+    ]
+  }
+}
+
+// MARK: - Alternative Simplified Approach (Recommended)
+
+/// Simplified permission requester that only handles Music Library permissions
+/// Use this if you don't need the Expo permissions module integration
+public class SimpleMusicLibraryPermissionRequester {
+  
+  public static func requestMusicLibraryPermission() async -> Bool {
+    return await withCheckedContinuation { continuation in
+      MPMediaLibrary.requestAuthorization { status in
+        continuation.resume(returning: status == .authorized)
+      }
+    }
+  }
+  
+  public static func requestBothPermissions() async -> (musicGranted: Bool, artworkGranted: Bool) {
+    let musicGranted = await requestMusicLibraryPermission()
+    let artworkGranted = await requestPhotoLibraryPermission()
+    return (musicGranted, artworkGranted)
+  }
+  
+  public static func requestPhotoLibraryPermission() async -> Bool {
+    return await withCheckedContinuation { continuation in
+      PHPhotoLibrary.requestAuthorization { status in
+        continuation.resume(returning: status == .authorized)
+      }
+    }
+  }
+  
+  public static func getMusicLibraryPermissionStatus() -> (
+    musicAuthorized: Bool,
+    artworkAuthorized: Bool,
+    status: String
+  ) {
+    let musicStatus = MPMediaLibrary.authorizationStatus()
+    let photoStatus = PHPhotoLibrary.authorizationStatus()
+    
+    let musicAuthorized = musicStatus == .authorized
+    let artworkAuthorized = photoStatus == .authorized
+    
+    let statusString: String
+    switch musicStatus {
+    case .authorized:
+      statusString = "granted"
+    case .denied, .restricted:
+      statusString = "denied"
+    case .notDetermined:
+      statusString = "undetermined"
+    @unknown default:
+      statusString = "undetermined"
+    }
+    
+    return (
+      musicAuthorized: musicAuthorized,
+      artworkAuthorized: artworkAuthorized,
+      status: statusString
+    )
   }
 }

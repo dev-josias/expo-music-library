@@ -26,6 +26,8 @@
 	<true/>
 	<key>LSMinimumSystemVersion</key>
 	<string>12.0</string>
+	<key>NSAppleMusicUsageDescription</key>
+	<string>This app needs access to your music library to display and organize your music.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
@@ -33,6 +35,8 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>This app needs access to photos to display song artwork.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>SplashScreen</string>
 	<key>UIRequiredDeviceCapabilities</key>

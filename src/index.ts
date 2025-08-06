@@ -95,8 +95,6 @@ export type Asset = {
   genreId?: string;
 };
 
-export type AlbumType = "album" | "moment" | "smartAlbum";
-
 export type Artist = {
   /**
    * Artist ID.
@@ -151,11 +149,6 @@ export type Album = {
    * Estimated number of assets on the album.
    */
   assetCount: number;
-  /**
-   * The type of the asset's album.
-   * @platform ios
-   */
-  type?: AlbumType;
   /**
    * Album Songs (Number of songs in albums)
    */
