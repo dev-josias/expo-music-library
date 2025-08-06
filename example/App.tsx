@@ -133,57 +133,67 @@ export default function App() {
     );
   };
 
-  const renderAssetItem = ({ item }: { item: ExpoMusicLibrary.Asset }) => (
-    <View style={styles.item}>
-      <View style={styles.itemContent}>
-        {item.artwork ? (
-          <Image
-            source={{ uri: `data:image/jpeg;base64,${item.artwork}` }}
-            style={styles.artwork}
-            onError={() =>
-              console.log("Failed to load artwork for:", item.title)
-            }
-          />
-        ) : (
-          <View style={styles.noArtwork}>
-            <Text style={styles.noArtworkText}>♪</Text>
-          </View>
-        )}
-        <View style={styles.itemDetails}>
-          <Text style={styles.title} numberOfLines={1}>
-            {item.title}
-          </Text>
-          <Text style={styles.artist} numberOfLines={1}>
-            {item.artist}
-          </Text>
-          <Text style={styles.duration}>{formatDuration(item.duration)}</Text>
-          <Text style={styles.id}>ID: {item.id}</Text>
-        </View>
-      </View>
-    </View>
-  );
+  const renderAssetItem = ({ item }: { item: ExpoMusicLibrary.Asset }) => {
+    const artworkUri =
+      Platform.OS === "android"
+        ? item.artwork // Already a file URI on Android
+        : `data:image/jpeg;base64,${item.artwork}`; // Base64 on iOS
 
-  const renderAlbumItem = ({ item }: { item: ExpoMusicLibrary.Album }) => (
-    <View style={styles.item}>
-      <View style={styles.itemContent}>
-        {item.artwork ? (
-          <Image
-            source={{ uri: `data:image/jpeg;base64,${item.artwork}` }}
-            style={styles.artwork}
-          />
-        ) : (
-          <View style={styles.noArtwork}>
-            <Text style={styles.noArtworkText}>♪</Text>
+    return (
+      <View style={styles.item}>
+        <View style={styles.itemContent}>
+          {item.artwork ? (
+            <Image
+              source={{ uri: artworkUri }}
+              style={styles.artwork}
+              onError={() =>
+                console.log("Failed to load artwork for:", item.title)
+              }
+            />
+          ) : (
+            <View style={styles.noArtwork}>
+              <Text style={styles.noArtworkText}>♪</Text>
+            </View>
+          )}
+          <View style={styles.itemDetails}>
+            <Text style={styles.title} numberOfLines={1}>
+              {item.title}
+            </Text>
+            <Text style={styles.artist} numberOfLines={1}>
+              {item.artist}
+            </Text>
+            <Text style={styles.duration}>{formatDuration(item.duration)}</Text>
+            <Text style={styles.id}>ID: {item.id}</Text>
           </View>
-        )}
-        <View style={styles.itemDetails}>
-          <Text style={styles.title}>{item.title}</Text>
-          <Text style={styles.artist}>{item.artist}</Text>
-          <Text style={styles.count}>{item.assetCount} songs</Text>
         </View>
       </View>
-    </View>
-  );
+    );
+  };
+
+  const renderAlbumItem = ({ item }: { item: ExpoMusicLibrary.Album }) => {
+    const artworkUri =
+      Platform.OS === "android"
+        ? item.artwork // Already a file URI on Android
+        : `data:image/jpeg;base64,${item.artwork}`; // Base64 on iOS
+    return (
+      <View style={styles.item}>
+        <View style={styles.itemContent}>
+          {item.artwork ? (
+            <Image source={{ uri: artworkUri }} style={styles.artwork} />
+          ) : (
+            <View style={styles.noArtwork}>
+              <Text style={styles.noArtworkText}>♪</Text>
+            </View>
+          )}
+          <View style={styles.itemDetails}>
+            <Text style={styles.title}>{item.title}</Text>
+            <Text style={styles.artist}>{item.artist}</Text>
+            <Text style={styles.count}>{item.assetCount} songs</Text>
+          </View>
+        </View>
+      </View>
+    );
+  };
 
   const renderArtistItem = ({ item }: { item: ExpoMusicLibrary.Artist }) => (
     <View style={styles.item}>
