@@ -1,12 +1,11 @@
 // Copyright 2015-present 650 Industries. All rights reserved.
 
-// Prior to React Native 0.61, it contained `RCTAssetsLibraryRequestHandler` that handles loading data from URLs
-// with `assets-library://` or `ph://` schemes. Due to lean core project, it's been moved to `@react-native-community/cameraroll`
-// and that made it impossible to render assets using URLs returned by MediaLibrary without installing CameraRoll.
-// Because it's still a unimodule and we need to export bare React Native module, we should make sure React Native is installed.
+// Music Library Image Loader - handles loading artwork from music library assets
+// Supports custom URI schemes for music artwork loading
 #if __has_include(<React/RCTImageURLLoader.h>)
 
 #import <Photos/Photos.h>
+#import <MediaPlayer/MediaPlayer.h>
 #import <React/RCTDefines.h>
 #import <React/RCTUtils.h>
 #import <React/RCTBridgeModule.h>
@@ -16,15 +15,18 @@
 
 RCT_EXPORT_MODULE()
 
-#pragma mark - RCTImageURLLoader    
+#pragma mark - RCTImageURLLoader
 
 - (BOOL)canLoadImageURL:(NSURL *)requestURL
 {
-  if (![PHAsset class]) {
+  if (!requestURL) {
     return NO;
   }
-  return [requestURL.scheme caseInsensitiveCompare:@"assets-library"] == NSOrderedSame ||
-    [requestURL.scheme caseInsensitiveCompare:@"ph"] == NSOrderedSame;
+  
+  // Support both ph:// (for Photos-based artwork) and music-artwork:// (for music-specific artwork)
+  return [requestURL.scheme caseInsensitiveCompare:@"ph"] == NSOrderedSame ||
+         [requestURL.scheme caseInsensitiveCompare:@"music-artwork"] == NSOrderedSame ||
+         [requestURL.scheme caseInsensitiveCompare:@"assets-library"] == NSOrderedSame;
 }
 
 - (RCTImageLoaderCancellationBlock)loadImageForURL:(NSURL *)imageURL
@@ -35,29 +37,147 @@ RCT_EXPORT_MODULE()
                                 partialLoadHandler:(RCTImageLoaderPartialLoadBlock)partialLoadHandler
                                  completionHandler:(RCTImageLoaderCompletionBlock)completionHandler
 {
-  // Using PhotoKit for iOS 8+
-  // The 'ph://' prefix is used by FBMediaKit to differentiate between
-  // assets-library. It is prepended to the local ID so that it is in the
-  // form of an NSURL which is what assets-library uses.
+  if (!imageURL) {
+    completionHandler(RCTErrorWithMessage(@"Cannot load artwork with no URL"), nil);
+    return ^{};
+  }
+  
+  // Check music library permission
+  if ([MPMediaLibrary authorizationStatus] != MPMediaLibraryAuthorizationStatusAuthorized) {
+    completionHandler(RCTErrorWithMessage(@"Music Library permission required to load artwork"), nil);
+    return ^{};
+  }
+  
+  NSString *scheme = [imageURL.scheme lowercaseString];
+  
+  if ([scheme isEqualToString:@"music-artwork"]) {
+    // Handle custom music artwork URIs: music-artwork://persistentID
+    return [self loadMusicArtworkForURL:imageURL
+                                   size:size
+                                  scale:scale
+                             resizeMode:resizeMode
+                        progressHandler:progressHandler
+                     partialLoadHandler:partialLoadHandler
+                      completionHandler:completionHandler];
+  }
+  else if ([scheme isEqualToString:@"ph"] || [scheme isEqualToString:@"assets-library"]) {
+    // Handle Photos-based artwork (fallback to original Photos implementation)
+    return [self loadPhotosArtworkForURL:imageURL
+                                    size:size
+                                   scale:scale
+                              resizeMode:resizeMode
+                         progressHandler:progressHandler
+                      partialLoadHandler:partialLoadHandler
+                       completionHandler:completionHandler];
+  }
+  
+  completionHandler(RCTErrorWithMessage(@"Unsupported artwork URL scheme"), nil);
+  return ^{};
+}
+
+#pragma mark - Music Artwork Loading
+
+- (RCTImageLoaderCancellationBlock)loadMusicArtworkForURL:(NSURL *)imageURL
+                                                     size:(CGSize)size
+                                                    scale:(CGFloat)scale
+                                               resizeMode:(RCTResizeMode)resizeMode
+                                          progressHandler:(RCTImageLoaderProgressBlock)progressHandler
+                                       partialLoadHandler:(RCTImageLoaderPartialLoadBlock)partialLoadHandler
+                                        completionHandler:(RCTImageLoaderCompletionBlock)completionHandler
+{
+  // Extract persistent ID from music-artwork://persistentID
+  NSString *persistentIDString = [imageURL.absoluteString substringFromIndex:@"music-artwork://".length];
+  uint64_t persistentID = [persistentIDString longLongValue];
+  
+  if (persistentID == 0) {
+    completionHandler(RCTErrorWithMessage(@"Invalid persistent ID in music artwork URL"), nil);
+    return ^{};
+  }
+  
+  // Find the music item
+  MPMediaQuery *query = [MPMediaQuery songsQuery];
+  MPMediaPropertyPredicate *predicate = [MPMediaPropertyPredicate
+    predicateWithValue:@(persistentID)
+    forProperty:MPMediaItemPropertyPersistentID];
+  [query addFilterPredicate:predicate];
+  
+  NSArray<MPMediaItem *> *items = [query items];
+  if (items.count == 0) {
+    completionHandler(RCTErrorWithMessage(@"Music item not found for artwork loading"), nil);
+    return ^{};
+  }
+  
+  MPMediaItem *item = items.firstObject;
+  MPMediaItemArtwork *artwork = item.artwork;
+  
+  if (!artwork) {
+    completionHandler(RCTErrorWithMessage(@"No artwork available for this music item"), nil);
+    return ^{};
+  }
+  
+  // Calculate target size
+  CGSize targetSize;
+  if (CGSizeEqualToSize(size, CGSizeZero)) {
+    // Use a reasonable default size for artwork
+    targetSize = CGSizeMake(300, 300);
+  } else {
+    targetSize = CGSizeApplyAffineTransform(size, CGAffineTransformMakeScale(scale, scale));
+  }
+  
+  // Get artwork image
+  UIImage *artworkImage = [artwork imageWithSize:targetSize];
+  
+  if (artworkImage) {
+    // Report progress if handler exists
+    if (progressHandler) {
+      progressHandler(1000000, 1000000); // 100% progress
+    }
+    completionHandler(nil, artworkImage);
+  } else {
+    completionHandler(RCTErrorWithMessage(@"Failed to load artwork image"), nil);
+  }
+  
+  // Return cancellation block (though music artwork loading is synchronous)
+  return ^{
+    // Nothing to cancel for synchronous music artwork loading
+  };
+}
+
+#pragma mark - Photos Artwork Loading (Fallback)
+
+- (RCTImageLoaderCancellationBlock)loadPhotosArtworkForURL:(NSURL *)imageURL
+                                                      size:(CGSize)size
+                                                     scale:(CGFloat)scale
+                                                resizeMode:(RCTResizeMode)resizeMode
+                                           progressHandler:(RCTImageLoaderProgressBlock)progressHandler
+                                        partialLoadHandler:(RCTImageLoaderPartialLoadBlock)partialLoadHandler
+                                         completionHandler:(RCTImageLoaderCompletionBlock)completionHandler
+{
+  // Check if PHAsset is available
+  if (![PHAsset class]) {
+    completionHandler(RCTErrorWithMessage(@"PhotoKit not available"), nil);
+    return ^{};
+  }
+  
+  // Extract asset ID from URL
   NSString *assetID = @"";
   PHFetchResult *results;
-  if (!imageURL) {
-    completionHandler(RCTErrorWithMessage(@"Cannot load a photo library asset with no URL"), nil);
-    return ^{};
-  } else if ([imageURL.scheme caseInsensitiveCompare:@"assets-library"] == NSOrderedSame) {
+  
+  if ([imageURL.scheme caseInsensitiveCompare:@"assets-library"] == NSOrderedSame) {
     assetID = [imageURL absoluteString];
     results = [PHAsset fetchAssetsWithALAssetURLs:@[imageURL] options:nil];
   } else {
     assetID = [imageURL.absoluteString substringFromIndex:@"ph://".length];
     results = [PHAsset fetchAssetsWithLocalIdentifiers:@[assetID] options:nil];
   }
+  
   if (results.count == 0) {
-    NSString *errorText = [NSString stringWithFormat:@"Failed to fetch PHAsset with local identifier %@ with no error message.", assetID];
+    NSString *errorText = [NSString stringWithFormat:@"Failed to fetch PHAsset with local identifier %@", assetID];
     completionHandler(RCTErrorWithMessage(errorText), nil);
     return ^{};
   }
 
-  PHAsset   *asset = [results firstObject];
+  PHAsset *asset = [results firstObject];
   PHImageRequestOptions *imageOptions = [PHImageRequestOptions new];
 
   // Allow PhotoKit to fetch images from iCloud
@@ -70,8 +190,6 @@ RCT_EXPORT_MODULE()
     };
   }
 
-  // Note: PhotoKit defaults to a deliveryMode of PHImageRequestOptionsDeliveryModeOpportunistic
-  // which means it may call back multiple times - we probably don't want that
   imageOptions.deliveryMode = PHImageRequestOptionsDeliveryModeHighQualityFormat;
 
   BOOL useMaximumSize = CGSizeEqualToSize(size, CGSizeZero);
