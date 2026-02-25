@@ -1,3 +1,3 @@
 export type ChangeEventPayload = {
-  value: string;
+  hasIncrementalChanges: boolean;
 };

@@ -213,6 +213,12 @@ func sortMPMediaItems(_ items: [MPMediaItem], by sortBy: [String]) -> [MPMediaIt
         let artist2 = item2.artist ?? ""
         return ascending ? artist1 < artist2 : artist1 > artist2
       }
+    case "album":
+      sortedItems.sort { item1, item2 in
+        let album1 = item1.albumTitle ?? ""
+        let album2 = item2.albumTitle ?? ""
+        return ascending ? album1 < album2 : album1 > album2
+      }
     default:
       break // Unknown sort key, skip
     }

@@ -28,7 +28,7 @@ internal open class GetFolders(
                     projection,
                     null,
                     null,
-                    "${MediaStore.Audio.Media.BUCKET_DISPLAY_NAME} ASC",  
+                    "${MediaStore.Audio.Media.BUCKET_DISPLAY_NAME} ASC",
                 )
                 .use { foldersCursor ->
                     if (foldersCursor == null) {
@@ -37,6 +37,7 @@ internal open class GetFolders(
                     val bucketIdIndex = foldersCursor.getColumnIndex(MediaStore.Audio.Media.BUCKET_ID)
                     val bucketDisplayNameIndex = foldersCursor.getColumnIndex(MediaStore.Audio.Media.BUCKET_DISPLAY_NAME)
 
+                    // Each row is one audio file — count rows per bucket for assetCount
                     while (foldersCursor.moveToNext()) {
                         val id = foldersCursor.getString(bucketIdIndex)
 
@@ -44,12 +45,13 @@ internal open class GetFolders(
                             continue
                         }
 
-                        Folder(
+                        val folder = folders[id] ?: Folder(
                             id = id,
                             title = foldersCursor.getString(bucketDisplayNameIndex),
                         ).also {
                             folders[id] = it
                         }
+                        folder.count++
                     }
                     promise.resolve(folders.values.map { it.toBundle() })
                 }
@@ -63,10 +65,11 @@ internal open class GetFolders(
         }
     }
 
-    private class Folder(private val id: String, private val title: String) {
+    private class Folder(private val id: String, private val title: String, var count: Int = 0) {
         fun toBundle() = Bundle().apply {
             putString("id", id)
             putString("title", title)
+            putInt("assetCount", count)
         }
     }
 }

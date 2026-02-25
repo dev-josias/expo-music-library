@@ -8,7 +8,11 @@ import android.Manifest.permission.READ_MEDIA_VIDEO
 import android.Manifest.permission.WRITE_EXTERNAL_STORAGE
 import android.annotation.SuppressLint
 import android.content.Context
+import android.database.ContentObserver
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.provider.MediaStore
 import expo.modules.core.errors.ModuleDestroyedException
 import expo.modules.interfaces.permissions.Permissions.askForPermissionsWithPermissionsManager
 import expo.modules.interfaces.permissions.Permissions.getPermissionsWithPermissionsManager
@@ -21,7 +25,9 @@ import expo.modules.musiclibrary.albums.GetAlbumAssets
 import expo.modules.musiclibrary.albums.GetAlbums
 import expo.modules.musiclibrary.artists.GetArtistAssets
 import expo.modules.musiclibrary.artists.GetArtists
+import expo.modules.musiclibrary.assets.GetAssetById
 import expo.modules.musiclibrary.assets.GetAssets
+import expo.modules.musiclibrary.assets.GetSearchAssets
 import expo.modules.musiclibrary.folders.GetFolderAssets
 import expo.modules.musiclibrary.folders.GetFolders
 import expo.modules.musiclibrary.genres.GetGenreAssets
@@ -35,17 +41,10 @@ class ExpoMusicLibraryModule : Module() {
   get() = appContext.reactContext ?: throw Exceptions.ReactContextLost()
 
   private val moduleCoroutineScope = CoroutineScope(Dispatchers.IO)
+  private var mediaObserver: ContentObserver? = null
 
-  // Each module class must implement the definition function. The definition consists of components
-  // that describes the module's functionality and behavior.
-  // See https://docs.expo.dev/modules/module-api for more details about available components.
   override fun definition() = ModuleDefinition {
-    // Sets the name of the module that JavaScript code will use to refer to the module. Takes a string as an argument.
-    // Can be inferred from module's class name, but it's recommended to set it explicitly for clarity.
-    // The module will be accessible from `requireNativeModule('ExpoMusicLibrary')` in JavaScript.
     Name("ExpoMusicLibrary")
-
-    // Sets constant properties on the module. Can take a dictionary or a closure that returns a dictionary.
 
     Constants {
       return@Constants mapOf(
@@ -53,23 +52,7 @@ class ExpoMusicLibraryModule : Module() {
       )
     }
 
-
-    // Defines event names that the module can send to JavaScript.
     Events("onChange")
-
-    // Defines a JavaScript synchronous function that runs the native code on the JavaScript thread.
-    Function("hello") {
-      "Hello world! 👋"
-    }
-
-    // Defines a JavaScript function that always returns a Promise and whose native code
-    // is by default dispatched on the different thread than the JavaScript runtime runs on.
-    AsyncFunction("setValueAsync") { value: String ->
-      // Send an event to JavaScript.
-      sendEvent("onChange", mapOf(
-        "value" to value
-      ))
-    }
 
     AsyncFunction("requestPermissionsAsync") { writeOnly: Boolean, promise: Promise ->
       askForPermissionsWithPermissionsManager(
@@ -78,7 +61,6 @@ class ExpoMusicLibraryModule : Module() {
         *getManifestPermissions(writeOnly)
       )
     }
-
 
     AsyncFunction("getPermissionsAsync") { writeOnly: Boolean, promise: Promise ->
       getPermissionsWithPermissionsManager(
@@ -99,16 +81,15 @@ class ExpoMusicLibraryModule : Module() {
     AsyncFunction("getAlbumsAsync") { promise: Promise ->
       throwUnlessPermissionsGranted(isWrite = false) {
         withModuleScope(promise) {
-          GetAlbums(
-            context, promise
-          ).execute()
+          GetAlbums(context, promise).execute()
         }
       }
     }
-    AsyncFunction("getAlbumAssetsAsync") { albumName: String, promise: Promise ->
+
+    AsyncFunction("getAlbumAssetsAsync") { albumName: String, options: SubQueryOptions, promise: Promise ->
       throwUnlessPermissionsGranted(isWrite = false) {
         withModuleScope(promise) {
-          GetAlbumAssets(context, albumName, promise).execute()
+          GetAlbumAssets(context, albumName, options, promise).execute()
         }
       }
     }
@@ -129,10 +110,10 @@ class ExpoMusicLibraryModule : Module() {
       }
     }
 
-    AsyncFunction("getArtistAssetsAsync") { artistId: String, promise: Promise ->
+    AsyncFunction("getArtistAssetsAsync") { artistId: String, options: SubQueryOptions, promise: Promise ->
       throwUnlessPermissionsGranted(isWrite = false) {
         withModuleScope(promise) {
-          GetArtistAssets(context, artistId, promise).execute()
+          GetArtistAssets(context, artistId, options, promise).execute()
         }
       }
     }
@@ -145,25 +126,60 @@ class ExpoMusicLibraryModule : Module() {
       }
     }
 
-    AsyncFunction("getGenreAssetsAsync") { genreId: String, promise: Promise ->
+    AsyncFunction("getGenreAssetsAsync") { genreId: String, options: SubQueryOptions, promise: Promise ->
       throwUnlessPermissionsGranted(isWrite = false) {
         withModuleScope(promise) {
-          GetGenreAssets(context, genreId, promise).execute()
+          GetGenreAssets(context, genreId, options, promise).execute()
         }
       }
     }
 
-    AsyncFunction("getFolderAssetsAsync") { folderId: String, promise: Promise ->
+    AsyncFunction("getFolderAssetsAsync") { folderId: String, options: SubQueryOptions, promise: Promise ->
       throwUnlessPermissionsGranted(isWrite = false) {
         withModuleScope(promise) {
-          GetFolderAssets(context, folderId, promise).execute()
+          GetFolderAssets(context, folderId, options, promise).execute()
         }
       }
     }
+
+    AsyncFunction("getAssetByIdAsync") { assetId: String, promise: Promise ->
+      throwUnlessPermissionsGranted(isWrite = false) {
+        withModuleScope(promise) {
+          GetAssetById(context, assetId, promise).execute()
+        }
+      }
+    }
+
+    AsyncFunction("searchAssetsAsync") { query: String, assetsOptions: AssetsOptions, promise: Promise ->
+      throwUnlessPermissionsGranted(isWrite = false) {
+        withModuleScope(promise) {
+          GetSearchAssets(context, query, assetsOptions, promise).execute()
+        }
+      }
+    }
+
+    OnStartObserving {
+      val handler = Handler(Looper.getMainLooper())
+      mediaObserver = object : ContentObserver(handler) {
+        override fun onChange(selfChange: Boolean) {
+          sendEvent("onChange", mapOf("hasIncrementalChanges" to true))
+        }
+      }
+      context.contentResolver.registerContentObserver(
+        MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+        true,
+        mediaObserver!!
+      )
+    }
+
+    OnStopObserving {
+      mediaObserver?.let { context.contentResolver.unregisterContentObserver(it) }
+      mediaObserver = null
+    }
   }
+
   @SuppressLint("InlinedApi")
   private fun getManifestPermissions(writeOnly: Boolean): Array<String> {
-    // ACCESS_MEDIA_LOCATION should not be requested if it's absent in android-manifest
     val shouldAddMediaLocationAccess = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
         MediaLibraryUtils.hasManifestPermission(context, ACCESS_MEDIA_LOCATION)
 

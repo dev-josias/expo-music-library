@@ -1,8 +1,10 @@
 package expo.modules.musiclibrary.genres
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.database.Cursor.FIELD_TYPE_NULL
 import android.os.Bundle
+import android.provider.MediaStore
 import android.provider.MediaStore.Audio.Genres
 import expo.modules.kotlin.Promise
 import expo.modules.musiclibrary.AlbumException
@@ -14,16 +16,16 @@ internal open class GetGenres(
     private val context: Context,
     private val promise: Promise
 ) {
+    @SuppressLint("InlinedApi")
     fun execute() {
-        val projection = GENRE_PROJECTION
-
         val genres = HashMap<String, Genre>()
 
         try {
+            // First pass: get all genres (id + name)
             context.contentResolver
                 .query(
                     Genres.EXTERNAL_CONTENT_URI,
-                    projection,
+                    GENRE_PROJECTION,
                     null,
                     null,
                     "${Genres.NAME} ASC"
@@ -42,18 +44,33 @@ internal open class GetGenres(
                             continue
                         }
 
-                        val genre = genres[id] ?: Genre(
+                        genres[id] = Genre(
                             id = id,
                             title = genreCursor.getString(genreDisplayNameIndex),
-                        ).also {
-                            genres[id] = it
-                        }
-
-                        genre.count++
+                        )
                     }
-
-                    promise.resolve(genres.values.map { it.toBundle() })
                 }
+
+            // Second pass: count songs per genre from audio media table
+            context.contentResolver
+                .query(
+                    MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                    arrayOf(MediaStore.Audio.Media.GENRE_ID),
+                    "${MediaStore.Files.FileColumns.MEDIA_TYPE} = ${MediaStore.Files.FileColumns.MEDIA_TYPE_AUDIO}",
+                    null,
+                    null
+                )
+                .use { mediaCursor ->
+                    if (mediaCursor != null) {
+                        val genreIdIndex = mediaCursor.getColumnIndex(MediaStore.Audio.Media.GENRE_ID)
+                        while (mediaCursor.moveToNext()) {
+                            val gId = mediaCursor.getString(genreIdIndex) ?: continue
+                            genres[gId]?.count = (genres[gId]?.count ?: 0) + 1
+                        }
+                    }
+                }
+
+            promise.resolve(genres.values.map { it.toBundle() })
         } catch (e: SecurityException) {
             promise.reject(
                 ERROR_UNABLE_TO_LOAD_PERMISSION,
@@ -68,7 +85,6 @@ internal open class GetGenres(
         fun toBundle() = Bundle().apply {
             putString("id", id)
             putString("title", title)
-            putParcelable("type", null)
             putInt("assetCount", count)
         }
     }

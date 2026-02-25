@@ -17,7 +17,10 @@ export type SortByKey =
   | "default"
   | "creationTime"
   | "modificationTime"
-  | "duration";
+  | "duration"
+  | "title"
+  | "artist"
+  | "album";
 export type SortByValue = [SortByKey, boolean] | SortByKey;
 
 export type MediaTypeObject = {
@@ -29,6 +32,9 @@ export type SortByObject = {
   creationTime: "creationTime";
   modificationTime: "modificationTime";
   duration: "duration";
+  title: "title";
+  artist: "artist";
+  album: "album";
 };
 
 export type Asset = {
@@ -123,6 +129,10 @@ export type Genre = {
    * Genre title.
    */
   title: string;
+  /**
+   * Number of audio assets in this genre.
+   */
+  assetCount: number;
 };
 
 export type Folder = {
@@ -134,6 +144,10 @@ export type Folder = {
    * Folder title.
    */
   title: string;
+  /**
+   * Number of audio assets in this folder.
+   */
+  assetCount: number;
 };
 
 export type Album = {
@@ -180,6 +194,14 @@ export type AssetsOptions = {
    */
   album?: AlbumRef;
   /**
+   * [Artist](#artist) or its ID to get assets from a specific artist.
+   */
+  artist?: ArtistRef;
+  /**
+   * [Genre](#genre) or its ID to get assets from a specific genre.
+   */
+  genre?: GenreRef;
+  /**
    * An array of [`SortByValue`](#sortbyvalue)s or a single `SortByValue` value. By default, all
    * keys are sorted in descending order, however you can also pass a pair `[key, ascending]` where
    * the second item is a `boolean` value that means whether to use ascending order. Note that if
@@ -198,6 +220,25 @@ export type AssetsOptions = {
    * date.
    */
   createdBefore?: Date | number;
+};
+
+/**
+ * Options for sub-collection asset queries (album, artist, genre, folder).
+ */
+export type SubQueryOptions = {
+  /**
+   * The maximum number of items on a single page.
+   * @default 20
+   */
+  first?: number;
+  /**
+   * Cursor from the previous page's `endCursor`.
+   */
+  after?: string;
+  /**
+   * Sort order for results.
+   */
+  sortBy?: SortByValue[] | SortByValue;
 };
 
 export type PagedInfo<T> = {
@@ -226,17 +267,17 @@ export type AssetRef = Asset | string;
 // @docsMissing
 export type AlbumRef = Album | string;
 
+// @docsMissing
+export type ArtistRef = Artist | string;
+
+// @docsMissing
+export type GenreRef = Genre | string;
+
 function getId(ref: any): string | undefined {
   if (typeof ref === "string") {
     return ref;
   }
   return ref ? ref.id : undefined;
-}
-
-function checkMediaType(mediaType: any): void {
-  if (Object.values(MediaType).indexOf(mediaType) === -1) {
-    throw new Error(`Invalid mediaType: ${mediaType}`);
-  }
 }
 
 function checkSortBy(sortBy: any): void {
@@ -275,6 +316,21 @@ function arrayize(item: any): any[] {
     return item;
   }
   return item ? [item] : [];
+}
+
+function processSubQueryOptions(options: SubQueryOptions): {
+  first: number;
+  after: string | null;
+  sortBy: string[];
+} {
+  const { first, after, sortBy } = options;
+  const sortByArray = sortBy ? arrayize(sortBy) : arrayize("default");
+  sortByArray.forEach(checkSortBy);
+  return {
+    first: first == null ? 20 : first,
+    after: after ?? null,
+    sortBy: sortByArray.map(sortByOptionToString),
+  };
 }
 
 // @needsAudit
@@ -339,11 +395,17 @@ export async function getFoldersAsync(): Promise<Folder[]> {
   return await ExpoMusicLibrary.getFoldersAsync();
 }
 
-export async function getFolderAssetsAsync(folderId: string): Promise<Asset[]> {
+export async function getFolderAssetsAsync(
+  folderId: string,
+  options: SubQueryOptions = {}
+): Promise<PagedInfo<Asset>> {
   if (!ExpoMusicLibrary.getFolderAssetsAsync) {
     throw new UnavailabilityError("ExpoMusicLibrary", "getFolderAssetsAsync");
   }
-  return await ExpoMusicLibrary.getFolderAssetsAsync(folderId);
+  return await ExpoMusicLibrary.getFolderAssetsAsync(
+    folderId,
+    processSubQueryOptions(options)
+  );
 }
 
 export async function getAlbumsAsync(): Promise<Album[]> {
@@ -353,11 +415,17 @@ export async function getAlbumsAsync(): Promise<Album[]> {
   return await ExpoMusicLibrary.getAlbumsAsync();
 }
 
-export async function getAlbumAssetsAsync(albumName: string): Promise<Asset[]> {
+export async function getAlbumAssetsAsync(
+  albumName: string,
+  options: SubQueryOptions = {}
+): Promise<PagedInfo<Asset>> {
   if (!ExpoMusicLibrary.getAlbumAssetsAsync) {
     throw new UnavailabilityError("ExpoMusicLibrary", "getAlbumAssetsAsync");
   }
-  return await ExpoMusicLibrary.getAlbumAssetsAsync(albumName);
+  return await ExpoMusicLibrary.getAlbumAssetsAsync(
+    albumName,
+    processSubQueryOptions(options)
+  );
 }
 
 export async function getArtistsAsync(): Promise<Artist[]> {
@@ -367,11 +435,17 @@ export async function getArtistsAsync(): Promise<Artist[]> {
   return await ExpoMusicLibrary.getArtistsAsync();
 }
 
-export async function getArtistAssetsAsync(artistId: string): Promise<Asset[]> {
+export async function getArtistAssetsAsync(
+  artistId: string,
+  options: SubQueryOptions = {}
+): Promise<PagedInfo<Asset>> {
   if (!ExpoMusicLibrary.getArtistAssetsAsync) {
     throw new UnavailabilityError("ExpoMusicLibrary", "getArtistAssetsAsync");
   }
-  return await ExpoMusicLibrary.getArtistAssetsAsync(artistId);
+  return await ExpoMusicLibrary.getArtistAssetsAsync(
+    artistId,
+    processSubQueryOptions(options)
+  );
 }
 
 export async function getGenresAsync(): Promise<Genre[]> {
@@ -381,11 +455,17 @@ export async function getGenresAsync(): Promise<Genre[]> {
   return await ExpoMusicLibrary.getGenresAsync();
 }
 
-export async function getGenreAssetsAsync(genreId: string): Promise<Asset[]> {
+export async function getGenreAssetsAsync(
+  genreId: string,
+  options: SubQueryOptions = {}
+): Promise<PagedInfo<Asset>> {
   if (!ExpoMusicLibrary.getGenreAssetsAsync) {
     throw new UnavailabilityError("ExpoMusicLibrary", "getGenreAssetsAsync");
   }
-  return await ExpoMusicLibrary.getGenreAssetsAsync(genreId);
+  return await ExpoMusicLibrary.getGenreAssetsAsync(
+    genreId,
+    processSubQueryOptions(options)
+  );
 }
 
 export async function getAssetsAsync(
@@ -395,13 +475,15 @@ export async function getAssetsAsync(
     throw new UnavailabilityError("ExpoMusicLibrary", "getAssetsAsync");
   }
 
-  const { first, after, album, sortBy, createdAfter, createdBefore } =
+  const { first, after, album, artist, genre, sortBy, createdAfter, createdBefore } =
     assetsOptions;
 
   const options = {
     first: first == null ? 20 : first,
     after: getId(after),
     album: getId(album),
+    artist: getId(artist),
+    genre: getId(genre),
     sortBy: sortBy ? arrayize(sortBy) : arrayize("default"),
     createdAfter: dateToNumber(createdAfter),
     createdBefore: dateToNumber(createdBefore),
@@ -433,6 +515,55 @@ export async function getAssetsAsync(
   options.sortBy = options.sortBy.map(sortByOptionToString);
 
   return await ExpoMusicLibrary.getAssetsAsync(options);
+}
+
+/**
+ * Gets a single asset by its ID.
+ * @param id The asset ID to look up.
+ * @return A promise that fulfils with an [`Asset`](#asset) object.
+ */
+export async function getAssetByIdAsync(id: string): Promise<Asset> {
+  if (!ExpoMusicLibrary.getAssetByIdAsync) {
+    throw new UnavailabilityError("ExpoMusicLibrary", "getAssetByIdAsync");
+  }
+  return await ExpoMusicLibrary.getAssetByIdAsync(id);
+}
+
+/**
+ * Searches for audio assets whose title, artist, or album match the query string.
+ * @param query The search string.
+ * @param options Optional pagination and filter options.
+ * @return A promise that fulfils with a [`PagedInfo<Asset>`](#pagedinfo) object.
+ */
+export async function searchAssetsAsync(
+  query: string,
+  options: AssetsOptions = {}
+): Promise<PagedInfo<Asset>> {
+  if (!ExpoMusicLibrary.searchAssetsAsync) {
+    throw new UnavailabilityError("ExpoMusicLibrary", "searchAssetsAsync");
+  }
+
+  if (!query || query.trim() === "") {
+    throw new Error('Search "query" cannot be empty.');
+  }
+
+  const { first, after, album, artist, genre, sortBy, createdAfter, createdBefore } = options;
+
+  const opts = {
+    first: first == null ? 20 : first,
+    after: getId(after),
+    album: getId(album),
+    artist: getId(artist),
+    genre: getId(genre),
+    sortBy: sortBy ? arrayize(sortBy) : arrayize("default"),
+    createdAfter: dateToNumber(createdAfter),
+    createdBefore: dateToNumber(createdBefore),
+  };
+
+  opts.sortBy.forEach(checkSortBy);
+  opts.sortBy = opts.sortBy.map(sortByOptionToString);
+
+  return await ExpoMusicLibrary.searchAssetsAsync(query, opts);
 }
 
 const emitter = ExpoMusicLibrary as {

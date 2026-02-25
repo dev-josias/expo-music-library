@@ -2,17 +2,21 @@ package expo.modules.musiclibrary.assets
 
 import android.database.Cursor
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
+import androidx.annotation.RequiresApi
 import expo.modules.musiclibrary.ASSET_PROJECTION
 import expo.modules.musiclibrary.models.Asset
 import java.io.IOException
+import androidx.core.net.toUri
 
 /**
  * Reads given `cursor` and saves the data to `response` param.
  * Reads `limit` rows, starting by `offset`.
  * Cursor must be a result of query with [ASSET_PROJECTION] projection
  */
+@RequiresApi(Build.VERSION_CODES.R)
 @Throws(IOException::class, UnsupportedOperationException::class)
 fun putAssetsInfo(
     cursor: Cursor,
@@ -28,9 +32,9 @@ fun putAssetsInfo(
     val modificationDateIndex = cursor.getColumnIndex(MediaStore.Audio.Media.DATE_MODIFIED)
     val durationIndex = cursor.getColumnIndex(MediaStore.Audio.Media.DURATION)
     val localUriIndex = cursor.getColumnIndex(MediaStore.Audio.Media.DATA)
-    val albumIdIndex = cursor.getColumnIndex(MediaStore.Audio.Albums._ID)
-    val artistIdIndex = cursor.getColumnIndex(MediaStore.Audio.Artists._ID)
-    val genreIdIndex = cursor.getColumnIndex(MediaStore.Audio.Genres._ID)
+    val albumIdIndex = cursor.getColumnIndex(MediaStore.Audio.Media.ALBUM_ID)
+    val artistIdIndex = cursor.getColumnIndex(MediaStore.Audio.Media.ARTIST_ID)
+    val genreIdIndex = cursor.getColumnIndex(MediaStore.Audio.Media.GENRE_ID)
 
     if (!cursor.moveToPosition(offset)) {
         return
@@ -41,7 +45,7 @@ fun putAssetsInfo(
         val assetId = cursor.getString(idIndex)
         val path = cursor.getString(localUriIndex)
         val localUri = "file://$path"
-        val artworkUri: Uri = Uri.parse("content://media/external/audio/media/${assetId}/albumart")
+        val artworkUri: Uri = "content://media/external/audio/media/${assetId}/albumart".toUri()
 
         val title = if (titleIndex != -1) cursor.getString(titleIndex) else cursor.getString(filenameIndex)
 
@@ -58,7 +62,7 @@ fun putAssetsInfo(
             putDouble("duration", cursor.getInt(durationIndex) / 1000.0)
             putString("albumId", cursor.getString(albumIdIndex))
             putString("artistId", cursor.getString(artistIdIndex))
-            putString("genreId", cursor.getString(genreIdIndex))
+            putString("genreId", if (genreIdIndex != -1) cursor.getString(genreIdIndex) else null)
         }
 
         cursor.moveToNext()
@@ -67,6 +71,7 @@ fun putAssetsInfo(
     }
 }
 
+@RequiresApi(Build.VERSION_CODES.R)
 @Throws(IOException::class, UnsupportedOperationException::class)
 fun fillAssetBundle(
     cursor: Cursor,
@@ -80,15 +85,15 @@ fun fillAssetBundle(
     val modificationDateIndex = cursor.getColumnIndex(MediaStore.Audio.Media.DATE_MODIFIED)
     val durationIndex = cursor.getColumnIndex(MediaStore.Audio.Media.DURATION)
     val localUriIndex = cursor.getColumnIndex(MediaStore.Audio.Media.DATA)
-    val albumIdIndex = cursor.getColumnIndex(MediaStore.Audio.Albums._ID)
-    val artistIdIndex = cursor.getColumnIndex(MediaStore.Audio.Artists._ID)
-    val genreIdIndex = cursor.getColumnIndex(MediaStore.Audio.Genres._ID)
+    val albumIdIndex = cursor.getColumnIndex(MediaStore.Audio.Media.ALBUM_ID)
+    val artistIdIndex = cursor.getColumnIndex(MediaStore.Audio.Media.ARTIST_ID)
+    val genreIdIndex = cursor.getColumnIndex(MediaStore.Audio.Media.GENRE_ID)
 
     while (cursor.moveToNext()) {
         val assetId = cursor.getString(idIndex)
         val path = cursor.getString(localUriIndex)
         val localUri = "file://$path"
-        val artworkUri: Uri = Uri.parse("content://media/external/audio/media/${assetId}/albumart")
+        val artworkUri: Uri = "content://media/external/audio/media/${assetId}/albumart".toUri()
 
         val title = if (titleIndex != -1) cursor.getString(titleIndex) else cursor.getString(filenameIndex)
 
@@ -105,7 +110,7 @@ fun fillAssetBundle(
             duration = cursor.getInt(durationIndex) / 1000.0,
             albumId = cursor.getString(albumIdIndex),
             artistId = cursor.getString(artistIdIndex),
-            genreId = cursor.getString(genreIdIndex)
+            genreId = if (genreIdIndex != -1) cursor.getString(genreIdIndex) else null
         ).also {
             assets[assetId] = it
         }

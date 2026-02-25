@@ -1,6 +1,7 @@
 package expo.modules.musiclibrary
 
 import android.net.Uri
+import android.os.Build
 import android.provider.MediaStore
 
 const val GET_ASSETS_DEFAULT_LIMIT = 20.0
@@ -18,19 +19,22 @@ const val ERROR_USER_DID_NOT_GRANT_WRITE_PERMISSIONS_MESSAGE = "User didn't gran
 
 val EXTERNAL_CONTENT_URI: Uri = MediaStore.Files.getContentUri("external")
 
-val ASSET_PROJECTION = arrayOf(
-  MediaStore.Audio.Media._ID,
-  MediaStore.Audio.Media.TITLE,
-  MediaStore.Audio.Media.ARTIST,
-  MediaStore.Audio.Media.DISPLAY_NAME,
-  MediaStore.Audio.Media.DATE_ADDED,
-  MediaStore.Audio.Media.DATE_MODIFIED,
-  MediaStore.Audio.Media.DURATION,
-  MediaStore.Audio.Media.DATA,
-  MediaStore.Audio.Albums._ID,
-  MediaStore.Audio.Artists._ID,
-  MediaStore.Audio.Genres._ID,
-)
+val ASSET_PROJECTION: Array<String> = buildList {
+  add(MediaStore.Audio.Media._ID)
+  add(MediaStore.Audio.Media.TITLE)
+  add(MediaStore.Audio.Media.ARTIST)
+  add(MediaStore.Audio.Media.DISPLAY_NAME)
+  add(MediaStore.Audio.Media.DATE_ADDED)
+  add(MediaStore.Audio.Media.DATE_MODIFIED)
+  add(MediaStore.Audio.Media.DURATION)
+  add(MediaStore.Audio.Media.DATA)
+  add(MediaStore.Audio.Media.ALBUM_ID)
+  add(MediaStore.Audio.Media.ARTIST_ID)
+  // GENRE_ID is available from API 30; on older devices the column won't exist
+  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+    add(MediaStore.Audio.Media.GENRE_ID)
+  }
+}.toTypedArray()
 
 val ALBUM_PROJECTION = arrayOf(
   MediaStore.Audio.Albums._ID,

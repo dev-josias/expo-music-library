@@ -1,15 +1,16 @@
 {
   "name": "expo-music-library",
-  "version": "1.2.8",
+  "version": "1.3.0",
   "description": "React Native Expo Native music library to retrieve song's albums, genres, artists, folders",
   "main": "build/index.js",
   "types": "build/index.d.ts",
+  "plugin": "./plugin/build/index.js",
   "scripts": {
-    "build": "expo-module build",
+    "build": "expo-module build && tsc -p plugin/tsconfig.json",
     "clean": "expo-module clean",
     "lint": "expo-module lint",
     "test": "expo-module test",
-    "prepare": "expo-module prepare",
+    "prepare": "expo-module prepare && tsc -p plugin/tsconfig.json",
     "prepublishOnly": "expo-module prepublishOnly",
     "expo-module": "expo-module",
     "open:ios": "xed example/ios",
@@ -33,9 +34,9 @@
   "homepage": "https://github.com/dev-josias/expo-music-library#readme",
   "dependencies": {},
   "devDependencies": {
-    "@types/react": "18.2.26",
-    "expo-module-scripts": "^3.5.2",
-    "expo-modules-core": "2.4.2"
+    "@types/react": "19.2.14",
+    "expo-module-scripts": "^55.0.2",
+    "expo-modules-core": "55.0.10"
   },
   "peerDependencies": {
     "expo": "*",

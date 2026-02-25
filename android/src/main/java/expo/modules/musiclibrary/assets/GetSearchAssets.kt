@@ -1,48 +1,48 @@
-package expo.modules.musiclibrary.genres
+package expo.modules.musiclibrary.assets
 
-import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Bundle
 import android.provider.MediaStore
 import expo.modules.kotlin.Promise
 import expo.modules.musiclibrary.ASSET_PROJECTION
 import expo.modules.musiclibrary.AssetQueryException
+import expo.modules.musiclibrary.AssetsOptions
 import expo.modules.musiclibrary.ERROR_NO_PERMISSIONS
 import expo.modules.musiclibrary.ERROR_UNABLE_TO_LOAD
 import expo.modules.musiclibrary.ERROR_UNABLE_TO_LOAD_PERMISSION
-import expo.modules.musiclibrary.SubQueryOptions
-import expo.modules.musiclibrary.assets.convertOrderDescriptors
-import expo.modules.musiclibrary.assets.putAssetsInfo
+import expo.modules.musiclibrary.EXTERNAL_CONTENT_URI
 import java.io.IOException
 
-internal class GetGenreAssets(
+internal class GetSearchAssets(
   private val context: Context,
-  private val genreId: String,
-  private val options: SubQueryOptions,
+  private val query: String,
+  private val assetsOptions: AssetsOptions,
   private val promise: Promise
 ) {
-  @SuppressLint("InlinedApi")
   fun execute() {
     val contentResolver = context.contentResolver
-    val selection = "${MediaStore.Audio.Media.GENRE_ID} = ?"
-    val selectionArgs = arrayOf(genreId)
-    val order = if (options.sortBy.isNotEmpty()) convertOrderDescriptors(options.sortBy)
-                else "${MediaStore.Audio.Media.DISPLAY_NAME} ASC"
-    val limit = options.first.toInt()
-    val offset = options.after?.toIntOrNull() ?: 0
-
     try {
+      val (baseSelection, order, limit, offset) = getQueryFromOptions(assetsOptions)
+
+      // Build search clause using ? placeholders for safety
+      val searchPart = "(${MediaStore.Audio.Media.TITLE} LIKE ? OR " +
+        "${MediaStore.Audio.Media.ARTIST} LIKE ? OR " +
+        "${MediaStore.Audio.Media.ALBUM} LIKE ?)"
+      val searchArgs = arrayOf("%$query%", "%$query%", "%$query%")
+
+      val fullSelection = if (baseSelection.isNotEmpty()) "$searchPart AND $baseSelection" else searchPart
+
       contentResolver.query(
-        MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+        EXTERNAL_CONTENT_URI,
         ASSET_PROJECTION,
-        selection,
-        selectionArgs,
+        fullSelection,
+        searchArgs,
         order
       ).use { assetsCursor ->
         if (assetsCursor == null) throw AssetQueryException()
 
         val assetsInfo = ArrayList<Bundle>()
-        putAssetsInfo(assetsCursor, assetsInfo, limit, offset)
+        putAssetsInfo(assetsCursor, assetsInfo, limit.toInt(), offset)
 
         val response = Bundle().apply {
           putParcelableArrayList("assets", assetsInfo)
@@ -59,7 +59,6 @@ internal class GetGenreAssets(
     } catch (e: IllegalArgumentException) {
       promise.reject(ERROR_UNABLE_TO_LOAD, e.message ?: "Invalid option", e)
     } catch (e: UnsupportedOperationException) {
-      e.printStackTrace()
       promise.reject(ERROR_NO_PERMISSIONS, e.message, e)
     }
   }

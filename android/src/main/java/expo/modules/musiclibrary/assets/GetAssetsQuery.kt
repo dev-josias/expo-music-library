@@ -41,6 +41,16 @@ private fun createSelectionString(input: AssetsOptions): String {
         selectionBuilder.append("${MediaStore.Audio.Albums._ID} = ${input.album}")
     }
 
+    input.artist?.let {
+        if (selectionBuilder.isNotEmpty()) selectionBuilder.append(" AND ")
+        selectionBuilder.append("${MediaStore.Audio.Media.ARTIST_ID} = $it")
+    }
+
+    input.genre?.let {
+        if (selectionBuilder.isNotEmpty()) selectionBuilder.append(" AND ")
+        selectionBuilder.append("${MediaStore.Audio.Media.GENRE_ID} = $it")
+    }
+
     if (selectionBuilder.isNotEmpty()) {
         selectionBuilder.append(" AND ")
     }
