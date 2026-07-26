@@ -1,15 +1,12 @@
 package expo.modules.musiclibrary.assets
 
 import android.content.Context
-import android.os.Bundle
 import expo.modules.kotlin.Promise
-import expo.modules.musiclibrary.ASSET_PROJECTION
 import expo.modules.musiclibrary.AssetQueryException
 import expo.modules.musiclibrary.AssetsOptions
 import expo.modules.musiclibrary.ERROR_NO_PERMISSIONS
 import expo.modules.musiclibrary.ERROR_UNABLE_TO_LOAD
 import expo.modules.musiclibrary.ERROR_UNABLE_TO_LOAD_PERMISSION
-import expo.modules.musiclibrary.EXTERNAL_CONTENT_URI
 import java.io.IOException
 
 internal class GetAssets(
@@ -20,37 +17,33 @@ internal class GetAssets(
   fun execute() {
     val contentResolver = context.contentResolver
     try {
-      val (selection, order, limit, offset) = getQueryFromOptions(assetOptions)
+      val query = getQueryFromOptions(assetOptions)
       contentResolver.query(
-        EXTERNAL_CONTENT_URI,
-        ASSET_PROJECTION,
-        selection,
-        null,
-        order
+        query.contentUri,
+        query.projection,
+        query.selection,
+        query.selectionArgs.takeIf { it.isNotEmpty() },
+        query.order
       ).use { assetsCursor ->
         if (assetsCursor == null) {
           throw AssetQueryException()
         }
 
-        val assetsInfo = ArrayList<Bundle>()
-        putAssetsInfo(
-          assetsCursor,
-          assetsInfo,
-          limit.toInt(),
-          offset
+        promise.resolve(
+          createPagedResponse(
+            contentResolver,
+            assetsCursor,
+            query.limit,
+            query.offset,
+            query.artworkMode,
+            assetOptions.genre
+          )
         )
-        val response = Bundle().apply {
-          putParcelableArrayList("assets", assetsInfo)
-          putBoolean("hasNextPage", !assetsCursor.isAfterLast)
-          putString("endCursor", assetsCursor.position.toString())
-          putInt("totalCount", assetsCursor.count)
-        }
-        promise.resolve(response)
       }
     } catch (e: SecurityException) {
       promise.reject(
         ERROR_UNABLE_TO_LOAD_PERMISSION,
-        "Could not get asset: need READ_EXTERNAL_STORAGE permission.", e
+        "Could not get assets: missing audio-library read permission.", e
       )
     } catch (e: IOException) {
       promise.reject(ERROR_UNABLE_TO_LOAD, "Could not read file", e)

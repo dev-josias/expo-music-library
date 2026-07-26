@@ -11,5 +11,7 @@ data class AssetsOptions(
   @Field val genre: String?,
   @Field val sortBy: List<String>,
   @Field val createdAfter: Double?,
-  @Field val createdBefore: Double?
+  @Field val createdBefore: Double?,
+  @Field val availability: String?,
+  @Field val artwork: String?
 ) : Record

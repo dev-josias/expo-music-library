@@ -1,127 +1,56 @@
 # Expo Music Library
 
-![npm](https://img.shields.io/npm/v/expo-music-library)
-![License](https://img.shields.io/npm/l/expo-music-library)
-![Downloads](https://img.shields.io/npm/dm/expo-music-library)
+[![npm](https://img.shields.io/npm/v/expo-music-library)](https://www.npmjs.com/package/expo-music-library)
+[![CI](https://github.com/dev-josias/expo-music-library/actions/workflows/ci.yml/badge.svg)](https://github.com/dev-josias/expo-music-library/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
-A powerful Expo native module that provides seamless access to the device's music library, enabling you to read and retrieve audio files, albums, artists, folders, and genres in your React Native applications.
+An Expo native module for querying audio-library metadata, availability,
+albums, artists, genres, playlists, and folders on Android and iOS.
 
-## 📱 Screenshots
+The library deliberately distinguishes an item being visible in the music
+library from its audio being available to a third-party app. This matters on
+iOS, where Apple Music and iCloud items can have complete metadata but no
+local, unprotected audio URL.
 
-|                   IOS                    |                     Android                      |
-| :--------------------------------------: | :----------------------------------------------: |
-| ![iOS Screenshot](./screenshots/ios.png) | ![Android Screenshot](./screenshots/android.png) |
+## Features
 
-## ✨ Features
+- Paginated audio queries, search, filters, and sorting
+- Albums, artists, genres, and platform collections
+- Explicit local, cloud-only, DRM-protected, and unavailable states
+- Opt-in lazy artwork URIs while preserving existing artwork output by default
+- Android MediaStore and iOS MediaPlayer implementations
+- Coarse library-change notifications
+- TypeScript types and an Expo config plugin
 
-- 🎵 **Comprehensive Music Access**: Retrieve audio files, albums, artists, folders, and genres with full metadata
-- 🔍 **Full-text Search**: Search assets by title, artist, or album name
-- 📄 **Pagination Everywhere**: Cursor-based pagination for all asset queries
-- 🎛️ **Advanced Filtering**: Filter by artist, genre, date range, and more in `getAssetsAsync`
-- 🗂️ **Sort by Title, Artist, Album**: New sort keys beyond time and duration
-- 🔔 **Real-time Change Listener**: Get notified when the music library changes
-- 🆔 **Get Asset by ID**: Look up a single track directly by its ID
-- 📊 **Accurate Asset Counts**: `assetCount` on genres and folders reflects actual song count
-- 📱 **Cross-Platform**: Full support for Android and iOS
-- 🔧 **TypeScript First**: Complete type definitions with IntelliSense support
+## Platform and Expo compatibility
 
-## 🚀 Platform Support
+| Environment | Support |
+| --- | --- |
+| Android physical device/emulator | Supported when the media library contains audio |
+| iOS physical device | Supported |
+| iOS Simulator | Module compiles, but the simulator has no real Music library |
+| Web | Native API unavailable; `isAvailableAsync()` safely returns `false` |
+| Expo Go | Not supported; use a development build |
 
-| Platform      | Android | iOS Device | iOS Simulator | Web | Expo Go |
-| ------------- | :-----: | :--------: | :-----------: | :-: | :-----: |
-| **Supported** |   ✅    |     ✅     |      ✅       | ❌  |   ❌    |
+Version 1.3.1 targets Expo SDK 55 through 57:
 
-**Requirements:**
+| Expo SDK | React Native | React | Minimum Node.js | Expo host minimums |
+| --- | --- | --- | --- | --- |
+| 55 | 0.83 | 19.2 | 20.19 | Android 7+, iOS 15.1+ |
+| 56 | 0.85 | 19.2 | 20.19 | Android 7+, iOS 16.4+ |
+| 57 | 0.86 | 19.2 | 22.13 | Android 7+, iOS 16.4+ |
 
-- ✅ **Expo SDK 55** / **React Native 0.79+**
-- ✅ **Expo Development Builds**
-- ✅ **Vanilla React Native** (via `npx install-expo-modules`)
-- ❌ **Not compatible with Expo Go** (requires custom native code)
+See the [Expo SDK version table](https://docs.expo.dev/versions/latest/) for
+the authoritative host requirements. Expo SDK 55 and newer always use React
+Native's New Architecture.
 
-**Minimum OS Versions:**
-
-- **iOS**: 13.0+
-- **Android**: API Level 21 (Android 5.0)+
-
-## 📦 Installation
-
-### Expo Projects
+## Installation
 
 ```bash
 npx expo install expo-music-library
 ```
 
-After installation, rebuild your app:
-
-```bash
-# For Android
-expo run:android
-
-# For iOS
-expo run:ios
-```
-
-### Vanilla React Native Projects
-
-This library uses the [Expo Modules API](https://docs.expo.dev/modules/overview/). To use it in a vanilla React Native project:
-
-**Step 1 — Install Expo Modules:**
-
-```bash
-npx install-expo-modules@latest
-```
-
-This one-time setup integrates the Expo Modules runtime into your existing React Native project without requiring you to migrate to Expo.
-
-**Step 2 — Install the library:**
-
-```bash
-npm install expo-music-library
-# or
-yarn add expo-music-library
-```
-
-**Step 3 — Rebuild native code:**
-
-```bash
-# Android
-npx react-native run-android
-
-# iOS (install pods first)
-cd ios && pod install && cd ..
-npx react-native run-ios
-```
-
-## ⚙️ Configuration
-
-### Config Plugin (Expo Projects — Recommended)
-
-`expo-music-library` ships with a config plugin that automatically adds all required permissions to your native project during `expo prebuild`. You never need to touch `Info.plist` or `AndroidManifest.xml` manually.
-
-Add it to your `app.json` or `app.config.js`:
-
-```json
-{
-  "expo": {
-    "plugins": [
-      "expo-music-library"
-    ]
-  }
-}
-```
-
-Then rebuild your app:
-
-```bash
-expo prebuild --clean
-expo run:android   # or expo run:ios
-```
-
-#### Plugin Options
-
-| Option | Type | Default | Description |
-|---|---|---|---|
-| `musicLibraryPermission` | `string` | `"Allow $(PRODUCT_NAME) to access your music library."` | iOS permission string shown in the system dialog |
+Add the config plugin:
 
 ```json
 {
@@ -130,7 +59,7 @@ expo run:android   # or expo run:ios
       [
         "expo-music-library",
         {
-          "musicLibraryPermission": "$(PRODUCT_NAME) needs your music library to play songs."
+          "musicLibraryPermission": "Allow $(PRODUCT_NAME) to access your music library."
         }
       ]
     ]
@@ -138,405 +67,355 @@ expo run:android   # or expo run:ios
 }
 ```
 
-#### What the plugin does
+Then regenerate or rebuild the native project:
 
-| Platform | Changes applied automatically |
-|---|---|
-| iOS `Info.plist` | Adds `NSAppleMusicUsageDescription` |
-| Android `AndroidManifest.xml` | Adds `READ_MEDIA_AUDIO` (API 33+) and `READ_EXTERNAL_STORAGE` (API ≤ 32) |
+```bash
+npx expo prebuild
+npx expo run:ios
+# or
+npx expo run:android
+```
 
-### Manual Configuration (Vanilla React Native / Bare Workflow)
+This package contains native code, so adding it requires a new native build.
+An over-the-air JavaScript update alone is not enough.
 
-If you are not using `expo prebuild`, add permissions manually.
+### What the config plugin changes
 
-**iOS** — add to `Info.plist`:
+| Platform | Configuration |
+| --- | --- |
+| iOS | Adds `NSAppleMusicUsageDescription` |
+| Android 13+ | Adds `READ_MEDIA_AUDIO` |
+| Android 12 and older | Adds `READ_EXTERNAL_STORAGE` with `maxSdkVersion="32"` |
+
+The module does not need Photos permission to read `MPMediaItemArtwork`.
+
+For bare projects that do not run Expo prebuild, apply the equivalent settings
+manually:
 
 ```xml
+<!-- ios/Info.plist -->
 <key>NSAppleMusicUsageDescription</key>
 <string>Allow $(PRODUCT_NAME) to access your music library.</string>
 ```
 
-**Android** — add to `AndroidManifest.xml`:
-
 ```xml
-<!-- Required for Android 13+ (API 33+) -->
+<!-- android/app/src/main/AndroidManifest.xml -->
 <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
-
-<!-- Fallback for Android 12 and below -->
-<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+<uses-permission
+  android:name="android.permission.READ_EXTERNAL_STORAGE"
+  android:maxSdkVersion="32" />
 ```
 
-## 🎯 Usage Examples
+## Basic usage
 
-### Basic — Request Permissions & Load Songs
+```ts
+import * as MusicLibrary from "expo-music-library";
 
-```javascript
-import { useEffect, useState } from "react";
-import { getPermissionsAsync, requestPermissionsAsync, getAssetsAsync } from "expo-music-library";
+async function loadSongs() {
+  if (!(await MusicLibrary.isAvailableAsync())) {
+    return [];
+  }
 
-export default function MusicApp() {
-  const [songs, setSongs] = useState([]);
+  const permission = await MusicLibrary.requestPermissionsAsync();
+  if (!permission.granted) {
+    return [];
+  }
 
-  useEffect(() => {
-    (async () => {
-      const { status } = await getPermissionsAsync();
-      if (status !== "granted") {
-        await requestPermissionsAsync();
-      }
-      const result = await getAssetsAsync({ first: 50, sortBy: "title" });
-      setSongs(result.assets);
-    })();
-  }, []);
-
-  return /* render songs */;
-}
-```
-
-### Search Songs
-
-```javascript
-import { searchAssetsAsync } from "expo-music-library";
-
-const results = await searchAssetsAsync("Beatles", { first: 20 });
-console.log(results.assets); // songs matching "Beatles" in title, artist, or album
-```
-
-### Infinite Scrolling
-
-```javascript
-import { useState, useCallback } from "react";
-import { getAssetsAsync } from "expo-music-library";
-
-export function useInfiniteMusic() {
-  const [assets, setAssets] = useState([]);
-  const [endCursor, setEndCursor] = useState(null);
-  const [hasNextPage, setHasNextPage] = useState(true);
-  const [loading, setLoading] = useState(false);
-
-  const loadMore = useCallback(async () => {
-    if (loading || !hasNextPage) return;
-    setLoading(true);
-    try {
-      const result = await getAssetsAsync({
-        first: 20,
-        after: endCursor,
-        sortBy: "title",
-      });
-      setAssets((prev) => [...prev, ...result.assets]);
-      setEndCursor(result.endCursor);
-      setHasNextPage(result.hasNextPage);
-    } finally {
-      setLoading(false);
-    }
-  }, [loading, hasNextPage, endCursor]);
-
-  return { assets, loadMore, loading, hasNextPage };
-}
-```
-
-### Filter by Artist or Genre
-
-```javascript
-import { getAssetsAsync } from "expo-music-library";
-
-// Get all songs by a specific artist
-const byArtist = await getAssetsAsync({ artist: "artist-id", first: 50 });
-
-// Get all songs in a specific genre
-const byGenre = await getAssetsAsync({ genre: "genre-id", first: 50 });
-```
-
-### Paginated Album / Artist / Genre Songs
-
-```javascript
-import { getAlbumAssetsAsync, getArtistAssetsAsync, getGenreAssetsAsync } from "expo-music-library";
-
-// First page of an album's songs
-const page1 = await getAlbumAssetsAsync("album-id", { first: 20, sortBy: "title" });
-
-// Next page
-const page2 = await getAlbumAssetsAsync("album-id", { first: 20, after: page1.endCursor });
-
-// Same pattern works for artists and genres
-const artistPage = await getArtistAssetsAsync("artist-id", { first: 20 });
-const genrePage  = await getGenreAssetsAsync("genre-id",  { first: 20 });
-```
-
-### Real-time Change Listener
-
-```javascript
-import { useEffect } from "react";
-import { addChangeListener } from "expo-music-library";
-
-useEffect(() => {
-  const subscription = addChangeListener((event) => {
-    if (event.hasIncrementalChanges) {
-      // Incremental update available — refresh your data
-    }
+  const page = await MusicLibrary.getAssetsAsync({
+    first: 50,
+    sortBy: ["title", true],
+    availability: "all",
+    artwork: "uri",
   });
-  return () => subscription.remove();
-}, []);
+
+  return page.assets;
+}
 ```
 
-### Get Asset by ID
+`["title", true]` means title ascending. Multiple sort values use an array:
 
-```javascript
-import { getAssetByIdAsync } from "expo-music-library";
-
-const asset = await getAssetByIdAsync("12345");
-console.log(asset.title, asset.artist, asset.duration);
+```ts
+sortBy: [["artist", true], ["album", true], "title"];
 ```
 
-## 📚 API Reference
+Page sizes must be integers from 1 through 1000.
 
-### Permissions
+## Audio availability
 
-#### `requestPermissionsAsync(writeOnly?: boolean): Promise<PermissionResponse>`
+Queries return metadata-only entries by default. Inspect availability before
+passing an item to AVFoundation, an audio player, an exporter, or a stem
+separator:
 
-Requests media library permissions.
+```ts
+const page = await MusicLibrary.getAssetsAsync({
+  availability: "all",
+});
 
-#### `getPermissionsAsync(writeOnly?: boolean): Promise<PermissionResponse>`
+for (const track of page.assets) {
+  if (!track.isLocallyAvailable || !track.canAccessWithAVFoundation) {
+    console.log(track.title, track.availability, track.availabilityReason);
+    continue;
+  }
 
-Checks current permission status without requesting.
-
-```typescript
-type PermissionResponse = {
-  status: "granted" | "denied" | "undetermined";
-  canAskAgain: boolean;
-  granted: boolean;
-  expires: "never" | number;
-  accessPrivileges?: "all" | "limited" | "none"; // iOS only
-};
+  const audioUri = track.assetUrl || track.contentUri || track.uri;
+  // Use audioUri with an API that supports its URI kind.
+}
 ```
 
----
+Availability values are:
 
-### Assets
+| Value | Meaning |
+| --- | --- |
+| `local` | The platform exposes audio the app can access |
+| `cloud` | The item is visible but is not downloaded locally |
+| `protected` | The item is DRM-protected |
+| `unavailable` | No usable native audio URL is currently exposed |
 
-#### `getAssetsAsync(options?: AssetsOptions): Promise<PagedInfo<Asset>>`
+Useful fields include:
 
-Retrieves audio assets with filtering, sorting, and pagination.
+```ts
+type AssetAvailabilityStatus =
+  | "local"
+  | "cloud"
+  | "protected"
+  | "unavailable";
 
-```typescript
-type AssetsOptions = {
-  first?: number;           // Page size (default: 20)
-  after?: AssetRef;         // Cursor from previous page's endCursor
-  album?: AlbumRef;         // Filter by album ID or Album object
-  artist?: ArtistRef;       // Filter by artist ID or Artist object
-  genre?: GenreRef;         // Filter by genre ID or Genre object
-  sortBy?: SortByValue | SortByValue[];
-  createdAfter?: Date | number;
-  createdBefore?: Date | number;
-};
-```
-
-#### `getAssetByIdAsync(id: string): Promise<Asset>`
-
-Gets a single asset by its ID.
-
-#### `searchAssetsAsync(query: string, options?: AssetsOptions): Promise<PagedInfo<Asset>>`
-
-Searches assets whose **title**, **artist**, or **album** match the query string. Accepts the same `AssetsOptions` for pagination and filtering.
-
----
-
-### Albums
-
-#### `getAlbumsAsync(): Promise<Album[]>`
-
-Returns all albums in the music library.
-
-#### `getAlbumAssetsAsync(albumId: string, options?: SubQueryOptions): Promise<PagedInfo<Asset>>`
-
-Returns paginated songs from a specific album.
-
----
-
-### Artists
-
-#### `getArtistsAsync(): Promise<Artist[]>`
-
-Returns all artists in the music library.
-
-#### `getArtistAssetsAsync(artistId: string, options?: SubQueryOptions): Promise<PagedInfo<Asset>>`
-
-Returns paginated songs by a specific artist.
-
----
-
-### Genres
-
-#### `getGenresAsync(): Promise<Genre[]>`
-
-Returns all genres in the music library with accurate song counts.
-
-#### `getGenreAssetsAsync(genreId: string, options?: SubQueryOptions): Promise<PagedInfo<Asset>>`
-
-Returns paginated songs in a specific genre.
-
----
-
-### Folders
-
-#### `getFoldersAsync(): Promise<Folder[]>`
-
-Returns all folders that contain audio files, with accurate song counts.
-
-#### `getFolderAssetsAsync(folderId: string, options?: SubQueryOptions): Promise<PagedInfo<Asset>>`
-
-Returns paginated songs in a specific folder.
-
----
-
-### Change Listener
-
-#### `addChangeListener(listener: (event: ChangeEventPayload) => void): { remove: () => void }`
-
-Subscribes to music library change events. Returns a subscription object with a `remove()` method.
-
-```typescript
-type ChangeEventPayload = {
-  hasIncrementalChanges: boolean;
-};
-```
-
----
-
-## 📐 Type Reference
-
-### `Asset`
-
-```typescript
 type Asset = {
+  // Existing 1.x fields
   id: string;
-  filename: string;
   title: string;
   artist: string;
-  artwork?: string;       // URI to album artwork (may be undefined)
-  uri: string;            // assets://* (iOS), file://* (Android)
-  mediaType: "audio";
-  width: number;
-  height: number;
-  creationTime: number;
-  modificationTime: number;
-  duration: number;       // seconds
-  albumId?: string;
-  artistId?: string;
-  genreId?: string;
+  uri: string;
+  artwork?: string;
+  duration: number;
+
+  // Additive 1.3.1 fields
+  assetUrl?: string | null;
+  contentUri?: string | null;
+  uriKind?: "ipod-library" | "content" | "file" | "none";
+  artworkUri?: string | null;
+  availability?: AssetAvailabilityStatus;
+  availabilityReason?: "cloud" | "protected" | "missingAssetUrl" | null;
+  isCloudItem?: boolean;
+  hasProtectedAsset?: boolean;
+  hasAssetUrl?: boolean;
+  hasLocalAssetURL?: boolean;
+  canAccessWithAVFoundation?: boolean;
+  isLocallyAvailable?: boolean;
+  isPlayable?: boolean;
+  mimeType?: string | null;
+  fileSize?: number | null;
+  albumTitle?: string | null;
+  trackNumber?: number | null;
+  discNumber?: number | null;
 };
 ```
 
-### `Album`
+`uri` remains a required string for 1.x compatibility, but it may be empty for
+an iOS metadata-only item. New code should prefer the explicit availability and
+URI fields.
 
-```typescript
-type Album = {
-  id: string;
-  title: string;
-  assetCount: number;     // total tracks in library from this album
-  albumSongs: number;     // tracks across all albums
-  artist: string;
-  artwork: string;
-};
+### Apple Music, purchased songs, and downloaded songs
+
+iOS returns items known to the user's Music library, including some cloud and
+Apple Music subscription entries. Library visibility does not guarantee that
+`MPMediaItem.assetURL` exists.
+
+- A cloud-only purchased track generally needs to be downloaded in Apple's
+  Music app before a local asset URL can become available.
+- Downloading does not remove DRM. Apple Music subscription tracks can remain
+  protected and cannot be exported, decoded, or sent to a stem separator
+  through a normal third-party file API.
+- A purchased item can still lack an accessible URL depending on its format,
+  account state, sync state, or platform policy.
+- For reliable editing and separation, import an unprotected audio file the
+  user is authorized to process.
+
+The module cannot initiate an Apple Music download or bypass DRM.
+
+To request only usable iOS AVFoundation items:
+
+```ts
+const localPage = await MusicLibrary.getAssetsAsync({
+  availability: "avFoundationAccessible",
+  artwork: "none",
+});
 ```
 
-### `Artist`
+Available filters are:
 
-```typescript
-type Artist = {
-  id: string;
-  title: string;
-  assetCount: number;
-  albumSongs: number;
-};
+- `"all"` — all matching metadata, including unavailable items
+- `"hasAssetUrl"` — items for which the platform exposes an asset URL
+- `"avFoundationAccessible"` — unprotected items expected to work with
+  AVFoundation
+
+## Artwork
+
+`artwork: "legacy"` is the default and preserves the 1.3.0 `artwork` field.
+On iOS that field remains raw JPEG base64; on Android it remains a URI.
+The additive `artworkUri` field is a lazy `music-artwork://<persistentID>` URI
+on iOS and a MediaStore content URI on Android.
+
+Use `artwork: "uri"` to put the lazy URI in both `artwork` and `artworkUri`, or
+`artwork: "none"` for large metadata-only queries.
+
+```tsx
+<Image source={{ uri: track.artworkUri || track.artwork }} />
 ```
 
-### `Genre`
+When rendering the legacy iOS field directly, add a
+`data:image/jpeg;base64,` prefix. Do not add that prefix to `artworkUri`.
 
-```typescript
-type Genre = {
-  id: string;
-  title: string;
-  assetCount: number;     // actual number of songs in this genre
-};
-```
+## Pagination
 
-### `Folder`
+Every asset page has this shape:
 
-```typescript
-type Folder = {
-  id: string;
-  title: string;
-  assetCount: number;     // number of audio files in this folder
-};
-```
-
-### `PagedInfo<T>`
-
-```typescript
+```ts
 type PagedInfo<T> = {
   assets: T[];
-  endCursor: string;      // pass as `after` to get next page
+  endCursor: string;
   hasNextPage: boolean;
   totalCount: number;
 };
 ```
 
-### `SubQueryOptions`
+`endCursor` is opaque and platform-specific. Pass it back unchanged; do not
+parse it or assume it is an asset ID or numeric offset.
 
-Used by `getAlbumAssetsAsync`, `getArtistAssetsAsync`, `getGenreAssetsAsync`, and `getFolderAssetsAsync`.
+```ts
+const firstPage = await MusicLibrary.getAssetsAsync({ first: 20 });
 
-```typescript
-type SubQueryOptions = {
-  first?: number;                        // Page size (default: 20)
-  after?: string;                        // Cursor from previous endCursor
-  sortBy?: SortByValue | SortByValue[];  // Sort order
+const nextPage = await MusicLibrary.getAssetsAsync({
+  first: 20,
+  after: firstPage.endCursor,
+});
+```
+
+## Search and filters
+
+```ts
+const matches = await MusicLibrary.searchAssetsAsync("Beatles", {
+  first: 25,
+  album: "album-id",
+  createdAfter: new Date("2020-01-01T00:00:00Z"),
+  sortBy: [["artist", true], ["album", true], ["title", true]],
+  availability: "all",
+});
+```
+
+`createdAfter` and `createdBefore` accept a valid `Date` or a finite Unix
+timestamp in milliseconds.
+
+## Albums, artists, genres, and collections
+
+```ts
+const albums = await MusicLibrary.getAlbumsAsync();
+const artists = await MusicLibrary.getArtistsAsync();
+const genres = await MusicLibrary.getGenresAsync();
+const collections = await MusicLibrary.getFoldersAsync();
+
+const albumTracks = await MusicLibrary.getAlbumAssetsAsync(albums[0].id, {
+  first: 20,
+  availability: "all",
+});
+```
+
+The legacy `Folder` API has platform-specific semantics:
+
+- Android folders represent filesystem/MediaStore audio directories.
+- iOS folders represent Music playlists.
+
+Use `getCapabilitiesAsync()` when the distinction matters:
+
+```ts
+const capabilities = await MusicLibrary.getCapabilitiesAsync();
+
+type MusicLibraryCapabilities = {
+  playlists: boolean;
+  directories: boolean;
+  cloudItems: boolean;
+  protectedAssets: boolean;
+  uriSchemes: Array<"ipod-library" | "content" | "file">;
 };
 ```
 
-### `SortByValue`
+## Library changes
 
-```typescript
-type SortByKey =
-  | "default"
-  | "creationTime"
-  | "modificationTime"
-  | "duration"
-  | "title"
-  | "artist"
-  | "album";
+Change notifications are reload signals, not incremental diffs:
 
-// A key alone (descending), or a [key, ascending] tuple
-type SortByValue = SortByKey | [SortByKey, boolean];
+```ts
+const subscription = MusicLibrary.addChangeListener((event) => {
+  if (event.requiresFullReload) {
+    void reloadCurrentQuery();
+  }
+});
+
+subscription.remove();
 ```
 
-**Examples:**
+The event payload is:
 
-```javascript
-sortBy: "title"                          // title descending
-sortBy: ["title", true]                 // title ascending
-sortBy: [["artist", true], "album"]     // artist ASC, then album DESC
+```ts
+type ChangeEventPayload = {
+  hasIncrementalChanges: boolean; // false at runtime in 1.3.1
+  requiresFullReload?: boolean; // true at runtime in 1.3.1
+  requiresReload?: boolean; // compatibility alias
+};
 ```
 
-## 🔧 Troubleshooting
+## API
 
-### Android Studio Gradle Sync Error
+```ts
+isAvailableAsync(): Promise<boolean>
+getPermissionsAsync(writeOnly?: boolean): Promise<PermissionResponse>
+requestPermissionsAsync(writeOnly?: boolean): Promise<PermissionResponse>
+getCapabilitiesAsync(): Promise<MusicLibraryCapabilities>
 
-If you see an error like:
+getAssetsAsync(options?: AssetsOptions): Promise<PagedInfo<Asset>>
+searchAssetsAsync(query: string, options?: AssetsOptions): Promise<PagedInfo<Asset>>
+getAssetByIdAsync(id: string): Promise<Asset>
 
+getAlbumsAsync(): Promise<Album[]>
+getAlbumAssetsAsync(id: string, options?: SubQueryOptions): Promise<PagedInfo<Asset>>
+getArtistsAsync(): Promise<Artist[]>
+getArtistAssetsAsync(id: string, options?: SubQueryOptions): Promise<PagedInfo<Asset>>
+getGenresAsync(): Promise<Genre[]>
+getGenreAssetsAsync(id: string, options?: SubQueryOptions): Promise<PagedInfo<Asset>>
+getFoldersAsync(): Promise<Folder[]>
+getFolderAssetsAsync(id: string, options?: SubQueryOptions): Promise<PagedInfo<Asset>>
+
+addChangeListener(listener: (event: ChangeEventPayload) => void): {
+  remove(): void;
+}
 ```
-Included build '.../expo-modules-autolinking/android/expo-gradle-plugin' does not exist
-```
 
-This means your root `node_modules` has an old version of `expo-modules-autolinking`. Run `bun install` (or `npm install`) in both the project root **and** the `example/` folder to fetch the correct version for Expo SDK 55.
+`writeOnly` remains in the permission methods for backward compatibility. The
+module itself is read-only.
 
-### iOS Simulator — No Songs
+## Troubleshooting
 
-The iOS Simulator does not have a real music library. Use a physical device to test with actual music files.
+### The package name is rejected as a config plugin
 
-### Permissions Denied on Android 13+
+Version 1.3.1 includes the root `app.plugin.js` entry point expected by Expo.
+Upgrade the package, then rerun prebuild and rebuild the native app.
 
-Ensure `READ_MEDIA_AUDIO` is listed in your manifest. The older `READ_EXTERNAL_STORAGE` permission is ignored on Android 13+ (API 33+).
+### A song is listed but cannot play or separate
 
-## 📄 License
+Check `availability`, `availabilityReason`, `hasProtectedAsset`,
+`hasAssetUrl`, and `canAccessWithAVFoundation`. On iOS, metadata-only cloud and
+protected items are expected. Downloading a purchased song may help; downloading
+an Apple Music subscription item does not remove DRM.
 
-MIT © [fayez-nazzal](https://github.com/fayez-nazzal)
+### The iOS Simulator returns no songs
+
+Use a physical iPhone or iPad. The simulator does not contain the user's real
+Music library.
+
+### Android permission is denied on API 33+
+
+Rebuild after applying the plugin. Android 13 and newer use
+`READ_MEDIA_AUDIO`; `READ_EXTERNAL_STORAGE` is limited to API 32 and older.
+
+## License
+
+[MIT](./LICENSE) © Kologo Josias

@@ -133,16 +133,23 @@ export default function App() {
     );
   };
 
+  const resolveArtworkUri = (
+    artwork?: string,
+    artworkUri?: string | null
+  ) => {
+    const value = artworkUri || artwork;
+    if (!value) return undefined;
+    if (value.startsWith("data:") || value.includes("://")) return value;
+    return `data:image/jpeg;base64,${value}`;
+  };
+
   const renderAssetItem = ({ item }: { item: ExpoMusicLibrary.Asset }) => {
-    const artworkUri =
-      Platform.OS === "android"
-        ? item.artwork // Already a file URI on Android
-        : `data:image/jpeg;base64,${item.artwork}`; // Base64 on iOS
+    const artworkUri = resolveArtworkUri(item.artwork, item.artworkUri);
 
     return (
       <View style={styles.item}>
         <View style={styles.itemContent}>
-          {item.artwork ? (
+          {artworkUri ? (
             <Image
               source={{ uri: artworkUri }}
               style={styles.artwork}
@@ -171,14 +178,11 @@ export default function App() {
   };
 
   const renderAlbumItem = ({ item }: { item: ExpoMusicLibrary.Album }) => {
-    const artworkUri =
-      Platform.OS === "android"
-        ? item.artwork // Already a file URI on Android
-        : `data:image/jpeg;base64,${item.artwork}`; // Base64 on iOS
+    const artworkUri = resolveArtworkUri(item.artwork, item.artworkUri);
     return (
       <View style={styles.item}>
         <View style={styles.itemContent}>
-          {item.artwork ? (
+          {artworkUri ? (
             <Image source={{ uri: artworkUri }} style={styles.artwork} />
           ) : (
             <View style={styles.noArtwork}>

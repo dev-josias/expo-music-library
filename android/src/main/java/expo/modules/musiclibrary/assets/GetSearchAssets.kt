@@ -1,16 +1,13 @@
 package expo.modules.musiclibrary.assets
 
 import android.content.Context
-import android.os.Bundle
 import android.provider.MediaStore
 import expo.modules.kotlin.Promise
-import expo.modules.musiclibrary.ASSET_PROJECTION
 import expo.modules.musiclibrary.AssetQueryException
 import expo.modules.musiclibrary.AssetsOptions
 import expo.modules.musiclibrary.ERROR_NO_PERMISSIONS
 import expo.modules.musiclibrary.ERROR_UNABLE_TO_LOAD
 import expo.modules.musiclibrary.ERROR_UNABLE_TO_LOAD_PERMISSION
-import expo.modules.musiclibrary.EXTERNAL_CONTENT_URI
 import java.io.IOException
 
 internal class GetSearchAssets(
@@ -22,7 +19,7 @@ internal class GetSearchAssets(
   fun execute() {
     val contentResolver = context.contentResolver
     try {
-      val (baseSelection, order, limit, offset) = getQueryFromOptions(assetsOptions)
+      val assetsQuery = getQueryFromOptions(assetsOptions)
 
       // Build search clause using ? placeholders for safety
       val searchPart = "(${MediaStore.Audio.Media.TITLE} LIKE ? OR " +
@@ -30,30 +27,33 @@ internal class GetSearchAssets(
         "${MediaStore.Audio.Media.ALBUM} LIKE ?)"
       val searchArgs = arrayOf("%$query%", "%$query%", "%$query%")
 
-      val fullSelection = if (baseSelection.isNotEmpty()) "$searchPart AND $baseSelection" else searchPart
+      val fullSelection = assetsQuery.selection
+        ?.let { "$searchPart AND $it" }
+        ?: searchPart
+      val fullSelectionArgs = searchArgs + assetsQuery.selectionArgs
 
       contentResolver.query(
-        EXTERNAL_CONTENT_URI,
-        ASSET_PROJECTION,
+        assetsQuery.contentUri,
+        assetsQuery.projection,
         fullSelection,
-        searchArgs,
-        order
+        fullSelectionArgs,
+        assetsQuery.order
       ).use { assetsCursor ->
         if (assetsCursor == null) throw AssetQueryException()
 
-        val assetsInfo = ArrayList<Bundle>()
-        putAssetsInfo(assetsCursor, assetsInfo, limit.toInt(), offset)
-
-        val response = Bundle().apply {
-          putParcelableArrayList("assets", assetsInfo)
-          putBoolean("hasNextPage", !assetsCursor.isAfterLast)
-          putString("endCursor", assetsCursor.position.toString())
-          putInt("totalCount", assetsCursor.count)
-        }
-        promise.resolve(response)
+        promise.resolve(
+          createPagedResponse(
+            contentResolver,
+            assetsCursor,
+            assetsQuery.limit,
+            assetsQuery.offset,
+            assetsQuery.artworkMode,
+            assetsOptions.genre
+          )
+        )
       }
     } catch (e: SecurityException) {
-      promise.reject(ERROR_UNABLE_TO_LOAD_PERMISSION, "Could not get assets: need READ_EXTERNAL_STORAGE permission.", e)
+      promise.reject(ERROR_UNABLE_TO_LOAD_PERMISSION, "Could not get assets: missing audio-library read permission.", e)
     } catch (e: IOException) {
       promise.reject(ERROR_UNABLE_TO_LOAD, "Could not read file", e)
     } catch (e: IllegalArgumentException) {

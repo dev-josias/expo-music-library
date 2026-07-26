@@ -1,9 +1,7 @@
 package expo.modules.musiclibrary.albums
 
-import android.content.ContentUris
 import android.content.Context
 import android.database.Cursor.FIELD_TYPE_NULL
-import android.net.Uri
 import android.os.Bundle
 import android.provider.MediaStore.Audio.Albums
 import expo.modules.kotlin.Promise
@@ -11,6 +9,7 @@ import expo.modules.musiclibrary.ALBUM_PROJECTION
 import expo.modules.musiclibrary.AlbumException
 import expo.modules.musiclibrary.ERROR_UNABLE_TO_LOAD
 import expo.modules.musiclibrary.ERROR_UNABLE_TO_LOAD_PERMISSION
+import expo.modules.musiclibrary.assets.getAlbumArtworkUri
 
 internal open class GetAlbums(
     private val context: Context,
@@ -26,7 +25,7 @@ internal open class GetAlbums(
                     ALBUM_PROJECTION,
                     null,
                     null,
-                    "${Albums.ALBUM} ASC",  
+                    "${Albums.ALBUM} ASC, ${Albums._ID} ASC",
                 )
                 .use { albumsCursor ->
                     if (albumsCursor == null) {
@@ -43,23 +42,24 @@ internal open class GetAlbums(
                         if (albumsCursor.getType(bucketDisplayNameIndex) == FIELD_TYPE_NULL) {
                             continue
                         }
-                        val artworkUri: Uri = Uri.parse("content://media/external/audio/albumart")
-                        val albumArtPath: Uri = ContentUris.withAppendedId(artworkUri, albumsCursor.getLong(bucketIdIndex))
+                        val albumArtPath = getAlbumArtworkUri(
+                            context.contentResolver,
+                            albumsCursor.getLong(bucketIdIndex)
+                        )
 
-                        val album = albums[id] ?: Album(
-                            id = id,
-                            title = albumsCursor.getString(bucketDisplayNameIndex),
-                            artwork = albumArtPath.toString(),
-                            artist = albumsCursor.getString(bucketArtistIndex),
-                            albumSongs = albumsCursor.getInt(albumSongsIndex)
-                        ).also {
-                            albums[id] = it
+                        if (albums[id] == null) {
+                            albums[id] = Album(
+                                id = id,
+                                title = albumsCursor.getString(bucketDisplayNameIndex),
+                                artwork = albumArtPath,
+                                artist = albumsCursor.getString(bucketArtistIndex) ?: "Unknown Artist",
+                                albumSongs = albumsCursor.getInt(albumSongsIndex),
+                                count = albumsCursor.getInt(albumSongsIndex)
+                            )
                         }
-
-                        album.count++
                     }
 
-                    promise.resolve(albums.values.map { it.toBundle() })
+                    promise.resolve(albums.values.sortedBy { it.title }.map { it.toBundle() })
                 }
         } catch (e: SecurityException) {
             promise.reject(
@@ -71,14 +71,15 @@ internal open class GetAlbums(
         }
     }
 
-    private class Album(private val id: String, private val title: String, var count: Int = 0, private val artwork: String, private val artist: String, private val albumSongs: Int) {
+    private class Album(private val id: String, val title: String, var count: Int = 0, private val artwork: String?, private val artist: String, private val albumSongs: Int) {
         fun toBundle() = Bundle().apply {
             putString("id", id)
             putString("title", title)
-            putString("artwork", artwork)
+            putString("artwork", artwork ?: "")
+            putString("artworkUri", artwork)
             putString("artist", artist)
             putParcelable("type", null)
-            putInt("assetsCount", count)
+            putInt("assetCount", count)
             putInt("albumSongs", albumSongs)
         }
     }

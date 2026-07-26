@@ -1,14 +1,24 @@
 import ExpoModulesCore
-import PhotosUI
 import MediaPlayer
 
 public class MusicLibraryModule: Module, MusicLibraryObserverHandler {
-  private var writeOnly = false
+  private struct ParsedQueryOptions {
+    let first: Int
+    let after: String?
+    let sortBy: [String]
+    let availability: MusicAssetAvailabilityFilter
+    let artwork: MusicArtworkMode
+  }
+
   private var changeDelegate: MusicLibraryObserver?
 
   func didChange() {
+    // MPMediaLibraryDidChange is an invalidation notification. It doesn't
+    // include an incremental diff, so consumers must refresh cached queries.
     sendEvent("onChange", [
-      "hasIncrementalChanges": true
+      "hasIncrementalChanges": false,
+      "requiresReload": true,
+      "requiresFullReload": true
     ])
   }
 
@@ -20,7 +30,7 @@ public class MusicLibraryModule: Module, MusicLibraryObserverHandler {
     Constants {
       [
         "MediaType": [
-          "audio": "audio",
+          "audio": "audio"
         ],
         "SortBy": [
           "default": "default",
@@ -35,387 +45,297 @@ public class MusicLibraryModule: Module, MusicLibraryObserverHandler {
       ]
     }
 
-    OnCreate {
-      appContext?.permissions?.register([
-        MusicLibraryPermissionRequester(),
-        MusicLibraryWriteOnlyPermissionRequester()
-      ])
-    }
-
     AsyncFunction("getPermissionsAsync") { (writeOnly: Bool, promise: Promise) in
-      self.writeOnly = writeOnly
-      let status = MPMediaLibrary.authorizationStatus()
-      let photoStatus = PHPhotoLibrary.authorizationStatus()
-
-      var permissionStatus: String
-      var granted = false
-
-      switch status {
-      case .authorized:
-        permissionStatus = "granted"
-        granted = true
-      case .denied, .restricted:
-        permissionStatus = "denied"
-      case .notDetermined:
-        permissionStatus = "undetermined"
-      @unknown default:
-        permissionStatus = "undetermined"
-      }
-
-      let result: [String: Any] = [
-        "status": permissionStatus,
-        "granted": granted,
-        "canAccessAllFiles": granted,
-        "accessPrivileges": granted ? "all" : "none",
-        "artworkAccess": photoStatus == .authorized
-      ]
-
-      promise.resolve(result)
+      // Keep the parameter for source compatibility. MediaPlayer doesn't offer
+      // a separate write-only authorization mode.
+      _ = writeOnly
+      promise.resolve(self.permissionResponse(for: MPMediaLibrary.authorizationStatus()))
     }
 
-    AsyncFunction("requestPermissionsAsync") { [weak self] (writeOnly: Bool, promise: Promise) in
-      guard let self = self else {
-        promise.reject("E_SELF_DEALLOCATED", "Self was deallocated.")
-        return
-      }
-
-      self.writeOnly = writeOnly
-
+    AsyncFunction("requestPermissionsAsync") { (writeOnly: Bool, promise: Promise) in
+      _ = writeOnly
       MPMediaLibrary.requestAuthorization { status in
         DispatchQueue.main.async {
-          PHPhotoLibrary.requestAuthorization { photoStatus in
-            DispatchQueue.main.async {
-              var permissionStatus: String
-              var granted = false
-
-              switch status {
-              case .authorized:
-                permissionStatus = "granted"
-                granted = true
-              case .denied, .restricted:
-                permissionStatus = "denied"
-              case .notDetermined:
-                permissionStatus = "undetermined"
-              @unknown default:
-                permissionStatus = "undetermined"
-              }
-
-              let result: [String: Any] = [
-                "status": permissionStatus,
-                "granted": granted,
-                "canAccessAllFiles": granted,
-                "accessPrivileges": granted ? "all" : "none",
-                "artworkAccess": photoStatus == .authorized
-              ]
-
-              promise.resolve(result)
-            }
-          }
+          promise.resolve(self.permissionResponse(for: status))
         }
       }
     }
 
-    AsyncFunction("getFoldersAsync") { (promise: Promise) in
-      if MPMediaLibrary.authorizationStatus() != .authorized {
-        promise.reject("E_NO_MUSIC_LIBRARY_PERMISSION", "Music Library permission required")
-        return
-      }
-
-      let query = MPMediaQuery.playlists()
-      let collections = query.collections ?? []
-      let folders = collections.map { playlist -> [String: Any] in
-        return [
-          "id": "\(playlist.persistentID)",
-          "title": playlist.value(forProperty: MPMediaPlaylistPropertyName) as? String ?? "Unknown Playlist",
-          "assetCount": playlist.count
-        ]
-      }
-      promise.resolve(folders)
+    AsyncFunction("getCapabilitiesAsync") { () -> [String: Any] in
+      [
+        "playlists": true,
+        "directories": false,
+        "cloudItems": true,
+        "protectedAssets": true,
+        "uriSchemes": ["ipod-library"]
+      ]
     }
 
-    AsyncFunction("getFolderAssetsAsync") { (folderId: String, options: [String: Any]?, promise: Promise) in
-      if MPMediaLibrary.authorizationStatus() != .authorized {
-        promise.reject("E_NO_MUSIC_LIBRARY_PERMISSION", "Music Library permission required")
+    AsyncFunction("getFoldersAsync") { (promise: Promise) in
+      guard self.checkPermissions(promise: promise) else {
         return
       }
 
-      let query = MPMediaQuery.songs()
-      if let folderIdUInt = UInt64(folderId) {
-        let predicate = MPMediaPropertyPredicate(value: folderIdUInt, forProperty: MPMediaPlaylistPropertyPersistentID)
-        query.addFilterPredicate(predicate)
-      }
+      let collections = MPMediaQuery.playlists().collections ?? []
+      promise.resolve(collections.compactMap { $0.formatAsPlaylist() })
+    }
 
-      guard var items = query.items else {
-        promise.resolve(emptyPagedResult())
+    AsyncFunction("getFolderAssetsAsync") {
+      (folderId: String, options: [String: Any]?, promise: Promise) in
+      guard self.checkPermissions(promise: promise),
+            let playlistId = self.requiredPersistentID(
+              folderId,
+              field: "folderId",
+              promise: promise
+            ),
+            let parsedOptions = self.parseQueryOptions(options, promise: promise) else {
         return
       }
 
-      let sortByArray = options?["sortBy"] as? [String] ?? []
-      if !sortByArray.isEmpty { items = sortMPMediaItems(items, by: sortByArray) }
+      guard let playlist = getMPMediaPlaylistBy(persistentID: playlistId) else {
+        promise.reject(
+          "E_FOLDER_NOT_FOUND",
+          "Playlist with id \(folderId) was not found."
+        )
+        return
+      }
 
-      let first = options?["first"] as? Int ?? 20
-      let after = options?["after"] as? String
-      promise.resolve(paginateItems(items, first: first, after: after))
+      guard let result = self.pagedResult(
+        items: playlist.items,
+        options: parsedOptions,
+        promise: promise
+      ) else {
+        return
+      }
+      promise.resolve(result)
     }
 
     AsyncFunction("getAlbumsAsync") { (promise: Promise) in
-      if MPMediaLibrary.authorizationStatus() != .authorized {
-        promise.reject("E_NO_MUSIC_LIBRARY_PERMISSION", "Music Library permission required")
-        return
-      }
-
-      let query = MPMediaQuery.albums()
-      guard let collections = query.collections else {
-        promise.resolve([])
-        return
-      }
-
-      let albums = collections.map { album -> [String: Any] in
-        return [
-          "id": "\(album.persistentID)",
-          "title": album.representativeItem?.albumTitle ?? "Unknown Album",
-          "assetCount": album.count,
-          "albumSongs": album.count,
-          "artist": album.representativeItem?.artist ?? "Unknown Artist",
-          "artwork": getArtwork(album.representativeItem) ?? ""
-        ]
-      }
-      promise.resolve(albums)
-    }
-
-    AsyncFunction("getAlbumAssetsAsync") { (albumId: String, options: [String: Any]?, promise: Promise) in
-      if MPMediaLibrary.authorizationStatus() != .authorized {
-        promise.reject("E_NO_MUSIC_LIBRARY_PERMISSION", "Music Library permission required")
+      guard self.checkPermissions(promise: promise) else {
         return
       }
 
       let query = MPMediaQuery.songs()
-      if let albumIdUInt = UInt64(albumId) {
-        let predicate = MPMediaPropertyPredicate(value: albumIdUInt, forProperty: MPMediaItemPropertyAlbumPersistentID)
-        query.addFilterPredicate(predicate)
-      }
+      query.groupingType = .album
+      let collections = query.collections ?? []
+      promise.resolve(collections.map { $0.formatAsAlbum() })
+    }
 
-      guard var items = query.items else {
-        promise.resolve(emptyPagedResult())
+    AsyncFunction("getAlbumAssetsAsync") {
+      (albumId: String, options: [String: Any]?, promise: Promise) in
+      guard self.checkPermissions(promise: promise),
+            let persistentID = self.requiredPersistentID(
+              albumId,
+              field: "albumId",
+              promise: promise
+            ),
+            let parsedOptions = self.parseQueryOptions(options, promise: promise) else {
         return
       }
 
-      let sortByArray = options?["sortBy"] as? [String] ?? []
-      if !sortByArray.isEmpty { items = sortMPMediaItems(items, by: sortByArray) }
+      let query = MPMediaQuery.songs()
+      query.addFilterPredicate(
+        MPMediaPropertyPredicate(
+          value: NSNumber(value: persistentID),
+          forProperty: MPMediaItemPropertyAlbumPersistentID
+        )
+      )
 
-      let first = options?["first"] as? Int ?? 20
-      let after = options?["after"] as? String
-      promise.resolve(paginateItems(items, first: first, after: after))
+      guard let result = self.pagedResult(
+        items: query.items ?? [],
+        options: parsedOptions,
+        promise: promise
+      ) else {
+        return
+      }
+      promise.resolve(result)
     }
 
     AsyncFunction("getArtistsAsync") { (promise: Promise) in
-      if MPMediaLibrary.authorizationStatus() != .authorized {
-        promise.reject("E_NO_MUSIC_LIBRARY_PERMISSION", "Music Library permission required")
-        return
-      }
-
-      let query = MPMediaQuery.artists()
-      guard let collections = query.collections else {
-        promise.resolve([])
-        return
-      }
-
-      let artists = collections.map { artist -> [String: Any] in
-        return [
-          "id": "\(artist.persistentID)",
-          "title": artist.representativeItem?.artist ?? "Unknown Artist",
-          "assetCount": artist.count,
-          "albumSongs": artist.count
-        ]
-      }
-      promise.resolve(artists)
-    }
-
-    AsyncFunction("getArtistAssetsAsync") { (artistId: String, options: [String: Any]?, promise: Promise) in
-      if MPMediaLibrary.authorizationStatus() != .authorized {
-        promise.reject("E_NO_MUSIC_LIBRARY_PERMISSION", "Music Library permission required")
+      guard self.checkPermissions(promise: promise) else {
         return
       }
 
       let query = MPMediaQuery.songs()
-      if let artistIdUInt = UInt64(artistId) {
-        let predicate = MPMediaPropertyPredicate(value: artistIdUInt, forProperty: MPMediaItemPropertyArtistPersistentID)
-        query.addFilterPredicate(predicate)
-      }
+      query.groupingType = .artist
+      let collections = query.collections ?? []
+      promise.resolve(collections.map { $0.formatAsArtist() })
+    }
 
-      guard var items = query.items else {
-        promise.resolve(emptyPagedResult())
+    AsyncFunction("getArtistAssetsAsync") {
+      (artistId: String, options: [String: Any]?, promise: Promise) in
+      guard self.checkPermissions(promise: promise),
+            let persistentID = self.requiredPersistentID(
+              artistId,
+              field: "artistId",
+              promise: promise
+            ),
+            let parsedOptions = self.parseQueryOptions(options, promise: promise) else {
         return
       }
 
-      let sortByArray = options?["sortBy"] as? [String] ?? []
-      if !sortByArray.isEmpty { items = sortMPMediaItems(items, by: sortByArray) }
+      let query = MPMediaQuery.songs()
+      query.addFilterPredicate(
+        MPMediaPropertyPredicate(
+          value: NSNumber(value: persistentID),
+          forProperty: MPMediaItemPropertyArtistPersistentID
+        )
+      )
 
-      let first = options?["first"] as? Int ?? 20
-      let after = options?["after"] as? String
-      promise.resolve(paginateItems(items, first: first, after: after))
+      guard let result = self.pagedResult(
+        items: query.items ?? [],
+        options: parsedOptions,
+        promise: promise
+      ) else {
+        return
+      }
+      promise.resolve(result)
     }
 
     AsyncFunction("getGenresAsync") { (promise: Promise) in
-      if MPMediaLibrary.authorizationStatus() != .authorized {
-        promise.reject("E_NO_MUSIC_LIBRARY_PERMISSION", "Music Library permission required")
+      guard self.checkPermissions(promise: promise) else {
         return
       }
 
-      let query = MPMediaQuery.genres()
-      guard let collections = query.collections else {
-        promise.resolve([])
-        return
-      }
-
-      let genres = collections.map { genre -> [String: Any] in
-        return [
-          "id": "\(genre.persistentID)",
-          "title": genre.representativeItem?.genre ?? "Unknown Genre",
-          "assetCount": genre.count
-        ]
-      }
-      promise.resolve(genres)
+      // genres() matches the entire media library, while every asset endpoint
+      // in this module returns songs. Group a songs query instead so counts and
+      // IDs describe the same result set as getGenreAssetsAsync.
+      let query = MPMediaQuery.songs()
+      query.groupingType = .genre
+      let collections = query.collections ?? []
+      promise.resolve(collections.map { $0.formatAsGenre() })
     }
 
-    AsyncFunction("getGenreAssetsAsync") { (genreId: String, options: [String: Any]?, promise: Promise) in
-      if MPMediaLibrary.authorizationStatus() != .authorized {
-        promise.reject("E_NO_MUSIC_LIBRARY_PERMISSION", "Music Library permission required")
+    AsyncFunction("getGenreAssetsAsync") {
+      (genreId: String, options: [String: Any]?, promise: Promise) in
+      guard self.checkPermissions(promise: promise),
+            let persistentID = self.requiredPersistentID(
+              genreId,
+              field: "genreId",
+              promise: promise
+            ),
+            let parsedOptions = self.parseQueryOptions(options, promise: promise) else {
         return
       }
 
       let query = MPMediaQuery.songs()
-      if let genreIdUInt = UInt64(genreId) {
-        let predicate = MPMediaPropertyPredicate(value: genreIdUInt, forProperty: MPMediaItemPropertyGenrePersistentID)
-        query.addFilterPredicate(predicate)
-      }
+      query.addFilterPredicate(
+        MPMediaPropertyPredicate(
+          value: NSNumber(value: persistentID),
+          forProperty: MPMediaItemPropertyGenrePersistentID
+        )
+      )
 
-      guard var items = query.items else {
-        promise.resolve(emptyPagedResult())
+      guard let result = self.pagedResult(
+        items: query.items ?? [],
+        options: parsedOptions,
+        promise: promise
+      ) else {
         return
       }
-
-      let sortByArray = options?["sortBy"] as? [String] ?? []
-      if !sortByArray.isEmpty { items = sortMPMediaItems(items, by: sortByArray) }
-
-      let first = options?["first"] as? Int ?? 20
-      let after = options?["after"] as? String
-      promise.resolve(paginateItems(items, first: first, after: after))
+      promise.resolve(result)
     }
 
-    AsyncFunction("getAssetsAsync") { (options: [String: Any]?, promise: Promise) in
-      if MPMediaLibrary.authorizationStatus() != .authorized {
-        promise.reject("E_NO_MUSIC_LIBRARY_PERMISSION", "Music Library permission required")
+    AsyncFunction("getAssetsAsync") {
+      (options: [String: Any]?, promise: Promise) in
+      guard self.checkPermissions(promise: promise),
+            let parsedOptions = self.parseQueryOptions(options, promise: promise) else {
         return
       }
 
       let query = MPMediaQuery.songs()
-
-      // Album filter
-      if let albumRef = options?["album"] as? String,
-         let albumIdUInt = UInt64(albumRef) {
-        let predicate = MPMediaPropertyPredicate(value: albumIdUInt, forProperty: MPMediaItemPropertyAlbumPersistentID)
-        query.addFilterPredicate(predicate)
-      }
-
-      // Artist filter
-      if let artistRef = options?["artist"] as? String,
-         let artistIdUInt = UInt64(artistRef) {
-        let predicate = MPMediaPropertyPredicate(value: artistIdUInt, forProperty: MPMediaItemPropertyArtistPersistentID)
-        query.addFilterPredicate(predicate)
-      }
-
-      // Genre filter
-      if let genreRef = options?["genre"] as? String,
-         let genreIdUInt = UInt64(genreRef) {
-        let predicate = MPMediaPropertyPredicate(value: genreIdUInt, forProperty: MPMediaItemPropertyGenrePersistentID)
-        query.addFilterPredicate(predicate)
-      }
-
-      guard var items = query.items else {
-        promise.resolve(emptyPagedResult())
+      guard self.applyCollectionFilters(
+        to: query,
+        options: options,
+        promise: promise
+      ) else {
         return
       }
 
-      // Sorting
-      if let sortByArray = options?["sortBy"] as? [String], !sortByArray.isEmpty {
-        items = sortMPMediaItems(items, by: sortByArray)
+      guard let dateFilteredItems = self.applyDateFilters(
+        to: query.items ?? [],
+        options: options,
+        promise: promise
+      ),
+      let result = self.pagedResult(
+        items: dateFilteredItems,
+        options: parsedOptions,
+        promise: promise
+      ) else {
+        return
       }
-
-      // Date filters
-      if let createdAfter = options?["createdAfter"] as? TimeInterval {
-        let date = Date(timeIntervalSince1970: createdAfter / 1000)
-        items = items.filter { $0.dateAdded >= date }
-      }
-      if let createdBefore = options?["createdBefore"] as? TimeInterval {
-        let date = Date(timeIntervalSince1970: createdBefore / 1000)
-        items = items.filter { $0.dateAdded <= date }
-      }
-
-      let first = options?["first"] as? Int ?? 20
-      let after = options?["after"] as? String
-      promise.resolve(paginateItems(items, first: first, after: after))
+      promise.resolve(result)
     }
 
     AsyncFunction("getAssetByIdAsync") { (assetId: String, promise: Promise) in
-      if MPMediaLibrary.authorizationStatus() != .authorized {
-        promise.reject("E_NO_MUSIC_LIBRARY_PERMISSION", "Music Library permission required")
+      guard self.checkPermissions(promise: promise),
+            let persistentID = self.requiredPersistentID(
+              assetId,
+              field: "assetId",
+              promise: promise
+            ) else {
         return
       }
 
-      guard let id = UInt64(assetId),
-            let item = getMPMediaItemBy(persistentID: id) else {
-        promise.reject("E_ASSET_NOT_FOUND", "Asset with id \(assetId) not found.")
+      guard let item = getMPMediaItemBy(persistentID: persistentID) else {
+        promise.reject(
+          "E_ASSET_NOT_FOUND",
+          "Asset with id \(assetId) was not found."
+        )
         return
       }
 
       promise.resolve(formatSongFromMediaItem(item))
     }
 
-    AsyncFunction("searchAssetsAsync") { (searchQuery: String, options: [String: Any]?, promise: Promise) in
-      if MPMediaLibrary.authorizationStatus() != .authorized {
-        promise.reject("E_NO_MUSIC_LIBRARY_PERMISSION", "Music Library permission required")
+    AsyncFunction("searchAssetsAsync") {
+      (searchQuery: String, options: [String: Any]?, promise: Promise) in
+      guard self.checkPermissions(promise: promise) else {
+        return
+      }
+
+      let trimmedQuery = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !trimmedQuery.isEmpty else {
+        promise.reject("E_INVALID_SEARCH_QUERY", "Search query cannot be empty.")
+        return
+      }
+
+      guard let parsedOptions = self.parseQueryOptions(options, promise: promise) else {
         return
       }
 
       let query = MPMediaQuery.songs()
-      guard var items = query.items else {
-        promise.resolve(emptyPagedResult())
+      guard self.applyCollectionFilters(
+        to: query,
+        options: options,
+        promise: promise
+      ) else {
         return
       }
 
-      // Filter by search query across title, artist, and album
-      let lowerQuery = searchQuery.lowercased()
-      items = items.filter { item in
-        let titleMatch = item.title?.lowercased().contains(lowerQuery) ?? false
-        let artistMatch = item.artist?.lowercased().contains(lowerQuery) ?? false
-        let albumMatch = item.albumTitle?.lowercased().contains(lowerQuery) ?? false
-        return titleMatch || artistMatch || albumMatch
+      let matchingItems = (query.items ?? []).filter { item in
+        item.title?.localizedCaseInsensitiveContains(trimmedQuery) == true ||
+          item.artist?.localizedCaseInsensitiveContains(trimmedQuery) == true ||
+          item.albumTitle?.localizedCaseInsensitiveContains(trimmedQuery) == true
       }
 
-      // Date filters
-      if let createdAfter = options?["createdAfter"] as? TimeInterval {
-        let date = Date(timeIntervalSince1970: createdAfter / 1000)
-        items = items.filter { $0.dateAdded >= date }
+      guard let dateFilteredItems = self.applyDateFilters(
+        to: matchingItems,
+        options: options,
+        promise: promise
+      ),
+      let result = self.pagedResult(
+        items: dateFilteredItems,
+        options: parsedOptions,
+        promise: promise
+      ) else {
+        return
       }
-      if let createdBefore = options?["createdBefore"] as? TimeInterval {
-        let date = Date(timeIntervalSince1970: createdBefore / 1000)
-        items = items.filter { $0.dateAdded <= date }
-      }
-
-      // Sorting
-      if let sortByArray = options?["sortBy"] as? [String], !sortByArray.isEmpty {
-        items = sortMPMediaItems(items, by: sortByArray)
-      }
-
-      let first = options?["first"] as? Int ?? 20
-      let after = options?["after"] as? String
-      promise.resolve(paginateItems(items, first: first, after: after))
+      promise.resolve(result)
     }
 
     OnStartObserving {
-      let delegate = MusicLibraryObserver(handler: self)
-      self.changeDelegate = delegate
+      self.changeDelegate = MusicLibraryObserver(handler: self)
     }
 
     OnStopObserving {
@@ -423,38 +343,306 @@ public class MusicLibraryModule: Module, MusicLibraryObserverHandler {
     }
   }
 
-  // MARK: - Shared helpers
+  // MARK: - Permission helpers
 
-  private func paginateItems(_ items: [MPMediaItem], first: Int, after: String?) -> [String: Any] {
-    var startIndex = 0
-    if let after = after, let afterId = UInt64(after) {
-      if let foundIndex = items.firstIndex(where: { $0.persistentID == afterId }) {
-        startIndex = foundIndex + 1
-      }
+  private func permissionResponse(
+    for status: MPMediaLibraryAuthorizationStatus
+  ) -> [String: Any] {
+    let statusValue: String
+    let granted: Bool
+    let canAskAgain: Bool
+
+    switch status {
+    case .authorized:
+      statusValue = "granted"
+      granted = true
+      canAskAgain = true
+    case .denied, .restricted:
+      statusValue = "denied"
+      granted = false
+      canAskAgain = false
+    case .notDetermined:
+      statusValue = "undetermined"
+      granted = false
+      canAskAgain = true
+    @unknown default:
+      statusValue = "undetermined"
+      granted = false
+      canAskAgain = true
     }
 
-    let endIndex = min(startIndex + first, items.count)
-    let paginatedItems = startIndex < items.count ? Array(items[startIndex..<endIndex]) : []
-    let assets = paginatedItems.map { formatSongFromMediaItem($0) }
-    let endCursor = paginatedItems.last.map { "\($0.persistentID)" } ?? after ?? ""
-
     return [
-      "assets": assets,
-      "endCursor": endCursor,
-      "hasNextPage": endIndex < items.count,
-      "totalCount": items.count
+      "status": statusValue,
+      "expires": "never",
+      "granted": granted,
+      "canAskAgain": canAskAgain,
+      "canAccessAllFiles": granted,
+      "accessPrivileges": granted ? "all" : "none",
+      // MPMediaItemArtwork is covered by Music Library authorization and
+      // doesn't require Photo Library access.
+      "artworkAccess": granted
     ]
   }
 
-  private func emptyPagedResult() -> [String: Any] {
-    return ["assets": [], "endCursor": "", "hasNextPage": false, "totalCount": 0]
-  }
-
   private func checkPermissions(promise: Promise) -> Bool {
-    if MPMediaLibrary.authorizationStatus() != .authorized {
-      promise.reject(MusicLibraryPermissionsException())
+    guard MPMediaLibrary.authorizationStatus() == .authorized else {
+      promise.reject(
+        "E_NO_MUSIC_LIBRARY_PERMISSION",
+        "Music Library permission is required."
+      )
       return false
     }
     return true
+  }
+
+  // MARK: - Input validation
+
+  private func requiredPersistentID(
+    _ value: String,
+    field: String,
+    promise: Promise
+  ) -> UInt64? {
+    guard let id = UInt64(value), id > 0 else {
+      promise.reject(
+        "E_INVALID_IDENTIFIER",
+        "\(field) must be a positive numeric persistent ID."
+      )
+      return nil
+    }
+    return id
+  }
+
+  private func parseQueryOptions(
+    _ options: [String: Any]?,
+    promise: Promise
+  ) -> ParsedQueryOptions? {
+    let first: Int
+    if let rawFirst = options?["first"], !(rawFirst is NSNull) {
+      guard !(rawFirst is Bool),
+            let number = rawFirst as? NSNumber else {
+        promise.reject("E_INVALID_PAGINATION", "first must be an integer.")
+        return nil
+      }
+
+      let value = number.doubleValue
+      guard value.isFinite,
+            value.rounded() == value,
+            value >= 1,
+            value <= 1000 else {
+        promise.reject(
+          "E_INVALID_PAGINATION",
+          "first must be an integer between 1 and 1000."
+        )
+        return nil
+      }
+      first = Int(value)
+    } else {
+      first = 20
+    }
+
+    let after: String?
+    if let rawAfter = options?["after"], !(rawAfter is NSNull) {
+      guard let cursor = rawAfter as? String,
+            let cursorID = UInt64(cursor),
+            cursorID > 0 else {
+        promise.reject(
+          "E_INVALID_CURSOR",
+          "after must be a valid persistent-ID cursor."
+        )
+        return nil
+      }
+      after = cursor
+    } else {
+      after = nil
+    }
+
+    let sortBy: [String]
+    if let rawSortBy = options?["sortBy"], !(rawSortBy is NSNull) {
+      guard let values = rawSortBy as? [String],
+            validateSortOptions(values) else {
+        promise.reject("E_INVALID_SORT", "sortBy contains an invalid descriptor.")
+        return nil
+      }
+      sortBy = values
+    } else {
+      sortBy = []
+    }
+
+    let availability: MusicAssetAvailabilityFilter
+    if let rawAvailability = options?["availability"], !(rawAvailability is NSNull) {
+      guard let value = rawAvailability as? String,
+            let parsed = MusicAssetAvailabilityFilter(rawValue: value) else {
+        promise.reject(
+          "E_INVALID_AVAILABILITY_FILTER",
+          "availability must be all, hasAssetUrl, or avFoundationAccessible."
+        )
+        return nil
+      }
+      availability = parsed
+    } else {
+      availability = .all
+    }
+
+    let artwork: MusicArtworkMode
+    if let rawArtwork = options?["artwork"], !(rawArtwork is NSNull) {
+      guard let value = rawArtwork as? String,
+            let parsed = MusicArtworkMode(rawValue: value) else {
+        promise.reject(
+          "E_INVALID_ARTWORK_MODE",
+          "artwork must be legacy, uri, or none."
+        )
+        return nil
+      }
+      artwork = parsed
+    } else {
+      artwork = .legacy
+    }
+
+    return ParsedQueryOptions(
+      first: first,
+      after: after,
+      sortBy: sortBy,
+      availability: availability,
+      artwork: artwork
+    )
+  }
+
+  private func applyCollectionFilters(
+    to query: MPMediaQuery,
+    options: [String: Any]?,
+    promise: Promise
+  ) -> Bool {
+    let filters: [(key: String, property: String)] = [
+      ("album", MPMediaItemPropertyAlbumPersistentID),
+      ("artist", MPMediaItemPropertyArtistPersistentID),
+      ("genre", MPMediaItemPropertyGenrePersistentID)
+    ]
+
+    for filter in filters {
+      guard let rawValue = options?[filter.key], !(rawValue is NSNull) else {
+        continue
+      }
+
+      guard let value = rawValue as? String,
+            let persistentID = UInt64(value),
+            persistentID > 0 else {
+        promise.reject(
+          "E_INVALID_IDENTIFIER",
+          "\(filter.key) must be a positive numeric persistent ID."
+        )
+        return false
+      }
+
+      query.addFilterPredicate(
+        MPMediaPropertyPredicate(
+          value: NSNumber(value: persistentID),
+          forProperty: filter.property
+        )
+      )
+    }
+
+    return true
+  }
+
+  private func optionalTimestamp(
+    in options: [String: Any]?,
+    key: String,
+    promise: Promise
+  ) -> Double?? {
+    guard let rawValue = options?[key], !(rawValue is NSNull) else {
+      return .some(nil)
+    }
+
+    guard !(rawValue is Bool),
+          let number = rawValue as? NSNumber,
+          number.doubleValue.isFinite else {
+      promise.reject("E_INVALID_DATE_FILTER", "\(key) must be a finite timestamp.")
+      return nil
+    }
+    return .some(number.doubleValue)
+  }
+
+  private func applyDateFilters(
+    to items: [MPMediaItem],
+    options: [String: Any]?,
+    promise: Promise
+  ) -> [MPMediaItem]? {
+    guard let createdAfter = optionalTimestamp(
+      in: options,
+      key: "createdAfter",
+      promise: promise
+    ),
+    let createdBefore = optionalTimestamp(
+      in: options,
+      key: "createdBefore",
+      promise: promise
+    ) else {
+      return nil
+    }
+
+    if let createdAfter,
+       let createdBefore,
+       createdAfter > createdBefore {
+      promise.reject(
+        "E_INVALID_DATE_FILTER",
+        "createdAfter must not be later than createdBefore."
+      )
+      return nil
+    }
+
+    var result = items
+    if let createdAfter {
+      let date = Date(timeIntervalSince1970: createdAfter / 1000)
+      result = result.filter { $0.dateAdded >= date }
+    }
+    if let createdBefore {
+      let date = Date(timeIntervalSince1970: createdBefore / 1000)
+      result = result.filter { $0.dateAdded <= date }
+    }
+    return result
+  }
+
+  // MARK: - Paging
+
+  private func pagedResult(
+    items: [MPMediaItem],
+    options: ParsedQueryOptions,
+    promise: Promise
+  ) -> [String: Any]? {
+    var filteredItems = uniqueSupportedMusicItems(items).filter {
+      itemMatchesAvailability($0, filter: options.availability)
+    }
+    filteredItems = sortMPMediaItems(filteredItems, by: options.sortBy)
+
+    let startIndex: Int
+    if let after = options.after,
+       let afterID = UInt64(after) {
+      guard let foundIndex = filteredItems.firstIndex(
+        where: { $0.persistentID == afterID }
+      ) else {
+        promise.reject(
+          "E_CURSOR_NOT_FOUND",
+          "The pagination cursor is stale or does not belong to this query."
+        )
+        return nil
+      }
+      startIndex = foundIndex + 1
+    } else {
+      startIndex = 0
+    }
+
+    let endIndex = min(startIndex + options.first, filteredItems.count)
+    let pageItems = startIndex < filteredItems.count
+      ? Array(filteredItems[startIndex..<endIndex])
+      : []
+
+    return [
+      "assets": pageItems.map {
+        formatSongFromMediaItem($0, artworkMode: options.artwork)
+      },
+      "endCursor": pageItems.last.map { "\($0.persistentID)" } ?? options.after ?? "",
+      "hasNextPage": endIndex < filteredItems.count,
+      "totalCount": filteredItems.count
+    ]
   }
 }

@@ -1,23 +1,131 @@
 import Foundation
-import Photos
-import ExpoModulesCore
 import MediaPlayer
+import UIKit
 
-// MARK: - Music Library Helper Functions
+enum MusicAssetAvailabilityFilter: String {
+  case all
+  case hasAssetUrl
+  case avFoundationAccessible
+}
 
-func formatSongFromMediaItem(_ item: MPMediaItem) -> [String: Any] {
+enum MusicArtworkMode: String {
+  case legacy
+  case uri
+  case none
+}
+
+private struct MusicSortDescriptor {
+  let key: String
+  let ascending: Bool
+}
+
+// MARK: - Asset serialization
+
+func getArtworkURI(_ item: MPMediaItem?) -> String? {
+  guard let item, item.persistentID > 0, item.artwork != nil else {
+    return nil
+  }
+  return "music-artwork://\(item.persistentID)"
+}
+
+func getLegacyArtwork(_ item: MPMediaItem?) -> String? {
+  guard let artwork = item?.artwork,
+        let image = artwork.image(at: CGSize(width: 300, height: 300)),
+        let data = image.jpegData(compressionQuality: 0.8) else {
+    return nil
+  }
+  return data.base64EncodedString()
+}
+
+func isSupportedMusicItem(_ item: MPMediaItem) -> Bool {
+  item.mediaType == .music
+}
+
+func uniqueSupportedMusicItems(_ items: [MPMediaItem]) -> [MPMediaItem] {
+  var seen = Set<MPMediaEntityPersistentID>()
+  return items.filter {
+    isSupportedMusicItem($0) && seen.insert($0.persistentID).inserted
+  }
+}
+
+func formatSongFromMediaItem(
+  _ item: MPMediaItem,
+  artworkMode: MusicArtworkMode = .legacy
+) -> [String: Any] {
+  let assetUrl = item.assetURL?.absoluteString
+  let isCloudItem = item.isCloudItem
+  let hasProtectedAsset = item.hasProtectedAsset
+  let hasAssetUrl = assetUrl != nil
+  let canAccessWithAVFoundation = hasAssetUrl && !hasProtectedAsset
+
+  let availability: String
+  let availabilityReason: Any
+  if hasProtectedAsset {
+    availability = "protected"
+    availabilityReason = "protected"
+  } else if canAccessWithAVFoundation {
+    availability = "local"
+    availabilityReason = NSNull()
+  } else if isCloudItem {
+    availability = "cloud"
+    availabilityReason = "cloud"
+  } else {
+    availability = "unavailable"
+    availabilityReason = "missingAssetUrl"
+  }
+
+  let artworkUri = artworkMode == .none ? nil : getArtworkURI(item)
+  let artwork: String
+  switch artworkMode {
+  case .legacy:
+    artwork = getLegacyArtwork(item) ?? ""
+  case .uri:
+    artwork = artworkUri ?? ""
+  case .none:
+    artwork = ""
+  }
+  let trackNumber: Any = item.albumTrackNumber > 0
+    ? item.albumTrackNumber
+    : NSNull()
+  let discNumber: Any = item.discNumber > 0
+    ? item.discNumber
+    : NSNull()
+
   return [
     "id": "\(item.persistentID)",
-    "filename": item.title ?? "Unknown Title", // Note: Actual filename not available from MPMediaItem
+    // MPMediaItem doesn't expose an original filename. Keep this legacy field
+    // populated with the title for compatibility with earlier releases.
+    "filename": item.title ?? "Unknown Title",
     "title": item.title ?? "Unknown Title",
     "artist": item.artist ?? "Unknown Artist",
-    "artwork": getArtwork(item) ?? "",
-    "uri": item.assetURL?.absoluteString ?? "",
+    "artwork": artwork,
+    "artworkUri": artworkUri ?? NSNull(),
+    // Keep the legacy non-null string while exposing the truthful nullable URL.
+    "uri": assetUrl ?? "",
+    "assetUrl": assetUrl ?? NSNull(),
+    "contentUri": NSNull(),
+    "uriKind": hasAssetUrl ? "ipod-library" : "none",
+    "availability": availability,
+    "availabilityReason": availabilityReason,
+    "isCloudItem": isCloudItem,
+    "hasProtectedAsset": hasProtectedAsset,
+    "hasAssetUrl": hasAssetUrl,
+    "hasLocalAssetURL": hasAssetUrl,
+    "canAccessWithAVFoundation": canAccessWithAVFoundation,
+    "isLocallyAvailable": canAccessWithAVFoundation,
+    "isPlayable": canAccessWithAVFoundation,
     "mediaType": "audio",
-    "width": 0, // Audio files don't have dimensions
+    "mimeType": NSNull(),
+    "fileSize": NSNull(),
+    "albumTitle": item.albumTitle ?? NSNull(),
+    "trackNumber": trackNumber,
+    "discNumber": discNumber,
+    "width": 0,
     "height": 0,
-    "creationTime": (item.dateAdded.timeIntervalSince1970 * 1000), // Convert to milliseconds
-    "modificationTime": ((item.lastPlayedDate ?? item.dateAdded).timeIntervalSince1970 * 1000),
+    "creationTime": item.dateAdded.timeIntervalSince1970 * 1000,
+    // MPMediaItem has no file-modification timestamp. Preserve the legacy
+    // last-played fallback until this field can be renamed in a major release.
+    "modificationTime": (item.lastPlayedDate ?? item.dateAdded).timeIntervalSince1970 * 1000,
     "duration": item.playbackDuration,
     "albumId": "\(item.albumPersistentID)",
     "artistId": "\(item.artistPersistentID)",
@@ -25,39 +133,21 @@ func formatSongFromMediaItem(_ item: MPMediaItem) -> [String: Any] {
   ]
 }
 
-func getArtwork(_ item: MPMediaItem?) -> String? {
-  guard let item = item, let artwork = item.artwork else {
-    return ""
-  }
-  
-  // Check if we have photo library permission for artwork access
-  let photoPermissionGranted = PHPhotoLibrary.authorizationStatus() == .authorized
-  
-  let artworkImage = artwork.image(at: CGSize(width: 300, height: 300))
-  
-  if let artworkData = artworkImage?.jpegData(compressionQuality: 0.8) {
-    return artworkData.base64EncodedString()
-  } else {
-    // If artwork access fails (permission issue), return empty string
-    print("Artwork access failed")
-    if !photoPermissionGranted {
-      print("Photo library permission may be required for this artwork")
-    }
-    return ""
+func itemMatchesAvailability(
+  _ item: MPMediaItem,
+  filter: MusicAssetAvailabilityFilter
+) -> Bool {
+  switch filter {
+  case .all:
+    return true
+  case .hasAssetUrl:
+    return item.assetURL != nil
+  case .avFoundationAccessible:
+    return item.assetURL != nil && !item.hasProtectedAsset
   }
 }
 
-// Alternative artwork function that returns URI instead of base64
-func getArtworkURI(_ item: MPMediaItem?) -> String? {
-  guard let item = item, item.artwork != nil else {
-    return nil
-  }
-  
-  // Return custom URI for image loader
-  return "music-artwork://\(item.persistentID)"
-}
-
-// MARK: - Music Library Specific Functions
+// MARK: - Media library lookup
 
 func getMPMediaItemBy(persistentID: UInt64) -> MPMediaItem? {
   let query = MPMediaQuery.songs()
@@ -66,224 +156,166 @@ func getMPMediaItemBy(persistentID: UInt64) -> MPMediaItem? {
     forProperty: MPMediaItemPropertyPersistentID
   )
   query.addFilterPredicate(predicate)
-  
   return query.items?.first
 }
 
-func getMPMediaItemsBy(persistentIDs: [UInt64]) -> [MPMediaItem] {
-  let query = MPMediaQuery.songs()
-  let numbers = persistentIDs.map { NSNumber(value: $0) }
+func getMPMediaPlaylistBy(persistentID: UInt64) -> MPMediaPlaylist? {
+  let query = MPMediaQuery.playlists()
   let predicate = MPMediaPropertyPredicate(
-    value: numbers,
-    forProperty: MPMediaItemPropertyPersistentID
+    value: NSNumber(value: persistentID),
+    forProperty: MPMediaPlaylistPropertyPersistentID
   )
   query.addFilterPredicate(predicate)
-  
-  return query.items ?? []
+  return query.collections?.first as? MPMediaPlaylist
 }
 
-// MARK: - Permission Helper
-
-func checkMusicLibraryPermission() throws {
-  if MPMediaLibrary.authorizationStatus() != .authorized {
-    throw MusicLibraryPermissionsException()
-  }
-}
-
-// MARK: - Date/Time Utilities
-
-func exportDate(_ date: Date?) -> Double? {
-  if let date = date {
-    let interval = date.timeIntervalSince1970
-    return interval * 1000 // Convert to milliseconds
-  }
-  return nil
-}
-
-// MARK: - Extensions for MPMediaItem Collections
+// MARK: - Collection serialization
 
 extension MPMediaItemCollection {
   func formatAsAlbum() -> [String: Any] {
-    let representativeItem = self.representativeItem
+    let musicItems = uniqueSupportedMusicItems(items)
+    let item = musicItems.first
+    let artworkUri = getArtworkURI(item)
     return [
-      "id": "\(self.persistentID)",
-      "title": representativeItem?.albumTitle ?? "Unknown Album",
-      "assetCount": self.count,
-      "albumSongs": self.count,
-      "artist": representativeItem?.artist ?? "Unknown Artist",
-      "artwork": getArtwork(representativeItem) ?? ""
+      "id": "\(persistentID)",
+      "title": item?.albumTitle ?? "Unknown Album",
+      "assetCount": musicItems.count,
+      "albumSongs": musicItems.count,
+      "artist": item?.artist ?? "Unknown Artist",
+      "artwork": getLegacyArtwork(item) ?? "",
+      "artworkUri": artworkUri ?? NSNull()
     ]
   }
-  
+
   func formatAsArtist() -> [String: Any] {
-    let representativeItem = self.representativeItem
+    let musicItems = uniqueSupportedMusicItems(items)
     return [
-      "id": "\(self.persistentID)",
-      "title": representativeItem?.artist ?? "Unknown Artist",
-      "assetCount": self.count,
-      "albumSongs": self.count
+      "id": "\(persistentID)",
+      "title": musicItems.first?.artist ?? "Unknown Artist",
+      "assetCount": musicItems.count,
+      "albumSongs": musicItems.count
     ]
   }
-  
+
   func formatAsGenre() -> [String: Any] {
-    let representativeItem = self.representativeItem
+    let musicItems = uniqueSupportedMusicItems(items)
     return [
-      "id": "\(self.persistentID)",
-      "title": representativeItem?.genre ?? "Unknown Genre"
+      "id": "\(persistentID)",
+      "title": musicItems.first?.genre ?? "Unknown Genre",
+      "assetCount": musicItems.count
     ]
   }
-  
-  func formatAsPlaylist() -> [String: Any] {
+
+  func formatAsPlaylist() -> [String: Any]? {
+    let musicItems = uniqueSupportedMusicItems(items)
+    guard !musicItems.isEmpty else {
+      return nil
+    }
     return [
-      "id": "\(self.persistentID)",
-      "title": self.value(forProperty: MPMediaPlaylistPropertyName) as? String ?? "Unknown Playlist"
+      "id": "\(persistentID)",
+      "title": value(forProperty: MPMediaPlaylistPropertyName) as? String ?? "Unknown Playlist",
+      "assetCount": musicItems.count
     ]
   }
 }
 
-// MARK: - Validation Helpers
+// MARK: - Deterministic sorting
 
-func validatePersistentID(_ idString: String?) -> UInt64? {
-  guard let idString = idString, let id = UInt64(idString), id > 0 else {
-    return nil
-  }
-  return id
+func validateSortOptions(_ sortBy: [String]) -> Bool {
+  sortBy.allSatisfy { parseSortDescriptor($0) != nil }
 }
-
-func validatePaginationOptions(first: Int?, after: String?) throws {
-  if let first = first {
-    if first <= 0 {
-      throw InvalidPaginationException()
-    }
-    if first > 1000 {
-      throw InvalidPaginationException()
-    }
-  }
-  
-  if let after = after {
-    if validatePersistentID(after) == nil {
-      throw CursorException()
-    }
-  }
-}
-
-// MARK: - Permission Requester Helper
-
-func musicLibraryRequesterClass(_ writeOnly: Bool) -> EXPermissionsRequester.Type {
-  if writeOnly {
-    return MusicLibraryWriteOnlyPermissionRequester.self
-  }
-  return MusicLibraryPermissionRequester.self
-}
-
-// MARK: - Sorting Helpers for Music Library
 
 func sortMPMediaItems(_ items: [MPMediaItem], by sortBy: [String]) -> [MPMediaItem] {
-  var sortedItems = items
-  
-  for sortString in sortBy.reversed() { // Apply sorts in reverse order for proper precedence
-    let components = sortString.components(separatedBy: " ")
-    let key = components[0]
-    let ascending = components.count > 1 && components[1] == "ASC"
-    
-    switch key {
-    case "creationTime":
-      sortedItems.sort { item1, item2 in
-        return ascending ? item1.dateAdded < item2.dateAdded : item1.dateAdded > item2.dateAdded
+  let descriptors = sortBy.compactMap(parseSortDescriptor).filter { $0.key != "default" }
+  guard !descriptors.isEmpty else {
+    return items
+  }
+
+  return items.sorted { lhs, rhs in
+    for descriptor in descriptors {
+      let comparison = compareMediaItems(lhs, rhs, key: descriptor.key)
+      guard comparison != .orderedSame else {
+        continue
       }
-    case "modificationTime":
-      sortedItems.sort { item1, item2 in
-        let date1 = item1.lastPlayedDate ?? Date(timeIntervalSince1970: 0)
-        let date2 = item2.lastPlayedDate ?? Date(timeIntervalSince1970: 0)
-        return ascending ? date1 < date2 : date1 > date2
-      }
-    case "duration":
-      sortedItems.sort { item1, item2 in
-        return ascending ? item1.playbackDuration < item2.playbackDuration : item1.playbackDuration > item2.playbackDuration
-      }
-    case "title":
-      sortedItems.sort { item1, item2 in
-        let title1 = item1.title ?? ""
-        let title2 = item2.title ?? ""
-        return ascending ? title1 < title2 : title1 > title2
-      }
-    case "artist":
-      sortedItems.sort { item1, item2 in
-        let artist1 = item1.artist ?? ""
-        let artist2 = item2.artist ?? ""
-        return ascending ? artist1 < artist2 : artist1 > artist2
-      }
-    case "album":
-      sortedItems.sort { item1, item2 in
-        let album1 = item1.albumTitle ?? ""
-        let album2 = item2.albumTitle ?? ""
-        return ascending ? album1 < album2 : album1 > album2
-      }
-    default:
-      break // Unknown sort key, skip
+      return descriptor.ascending
+        ? comparison == .orderedAscending
+        : comparison == .orderedDescending
     }
+
+    // A deterministic final key is required for cursor pagination when the
+    // requested sort values are equal.
+    return lhs.persistentID < rhs.persistentID
   }
-  
-  return sortedItems
 }
 
-// MARK: - Pagination Helpers
+private func parseSortDescriptor(_ rawValue: String) -> MusicSortDescriptor? {
+  let components = rawValue
+    .split(whereSeparator: \.isWhitespace)
+    .map(String.init)
 
-func paginateMPMediaItems(
-  _ items: [MPMediaItem],
-  first: Int,
-  after: String?
-) -> (assets: [[String: Any]], hasNextPage: Bool, totalCount: Int) {
-  let totalCount = items.count
-  let pageSize = min(first, totalCount)
-  
-  var startIndex = 0
-  if let after = after, let afterId = validatePersistentID(after) {
-    if let foundIndex = items.firstIndex(where: { $0.persistentID == afterId }) {
-      startIndex = foundIndex + 1
-    }
+  guard components.count == 2 else {
+    return nil
   }
-  
-  let endIndex = min(startIndex + pageSize, totalCount)
-  let pageItems = startIndex < totalCount ? Array(items[startIndex..<endIndex]) : []
-  
-  let assets = pageItems.map { formatSongFromMediaItem($0) }
-  let hasNextPage = endIndex < totalCount
-  
-  return (assets: assets, hasNextPage: hasNextPage, totalCount: totalCount)
+
+  let validKeys = [
+    "default",
+    "creationTime",
+    "modificationTime",
+    "duration",
+    "title",
+    "artist",
+    "album"
+  ]
+  guard validKeys.contains(components[0]) else {
+    return nil
+  }
+
+  switch components[1].uppercased() {
+  case "ASC":
+    return MusicSortDescriptor(key: components[0], ascending: true)
+  case "DESC":
+    return MusicSortDescriptor(key: components[0], ascending: false)
+  default:
+    return nil
+  }
 }
 
-// MARK: - Filter Helpers
-
-func filterMPMediaItemsByDateRange(
-  _ items: [MPMediaItem],
-  createdAfter: Double? = nil,
-  createdBefore: Double? = nil
-) -> [MPMediaItem] {
-  var filteredItems = items
-  
-  if let createdAfter = createdAfter {
-    let afterDate = Date(timeIntervalSince1970: createdAfter / 1000)
-    filteredItems = filteredItems.filter { $0.dateAdded >= afterDate }
+private func compareMediaItems(
+  _ lhs: MPMediaItem,
+  _ rhs: MPMediaItem,
+  key: String
+) -> ComparisonResult {
+  switch key {
+  case "creationTime":
+    return compare(lhs.dateAdded, rhs.dateAdded)
+  case "modificationTime":
+    return compare(
+      lhs.lastPlayedDate ?? Date(timeIntervalSince1970: 0),
+      rhs.lastPlayedDate ?? Date(timeIntervalSince1970: 0)
+    )
+  case "duration":
+    return compare(lhs.playbackDuration, rhs.playbackDuration)
+  case "title":
+    return compare(lhs.title ?? "", rhs.title ?? "")
+  case "artist":
+    return compare(lhs.artist ?? "", rhs.artist ?? "")
+  case "album":
+    return compare(lhs.albumTitle ?? "", rhs.albumTitle ?? "")
+  default:
+    return .orderedSame
   }
-  
-  if let createdBefore = createdBefore {
-    let beforeDate = Date(timeIntervalSince1970: createdBefore / 1000)
-    filteredItems = filteredItems.filter { $0.dateAdded <= beforeDate }
-  }
-  
-  return filteredItems
 }
 
-// MARK: - REMOVED: Photo Library Functions
-// All the PHAsset, PHAssetCollection, and Photos-related functions have been removed
-// as they're not relevant for a music library module. These included:
-// - stringify(mediaType:)
-// - stringifyMedia(mediaSubtypes:)
-// - stringifyAlbumType(type:)
-// - exportAsset, exportAssetInfo
-// - exportLocation, assetUriForLocalId
-// - All PHAsset and PHAssetCollection related functions
-// - Photo album creation/management functions
+private func compare<T: Comparable>(_ lhs: T, _ rhs: T) -> ComparisonResult {
+  if lhs < rhs {
+    return .orderedAscending
+  }
+  if lhs > rhs {
+    return .orderedDescending
+  }
+  return .orderedSame
+}
 
-// If you need Photos functionality, that should be in a separate Photos module
+private func compare(_ lhs: String, _ rhs: String) -> ComparisonResult {
+  lhs.localizedCaseInsensitiveCompare(rhs)
+}

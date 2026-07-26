@@ -1,11 +1,7 @@
 package expo.modules.musiclibrary
 
-import android.Manifest.permission.ACCESS_MEDIA_LOCATION
 import android.Manifest.permission.READ_EXTERNAL_STORAGE
 import android.Manifest.permission.READ_MEDIA_AUDIO
-import android.Manifest.permission.READ_MEDIA_IMAGES
-import android.Manifest.permission.READ_MEDIA_VIDEO
-import android.Manifest.permission.WRITE_EXTERNAL_STORAGE
 import android.annotation.SuppressLint
 import android.content.Context
 import android.database.ContentObserver
@@ -48,6 +44,7 @@ class ExpoMusicLibraryModule : Module() {
 
     Constants {
       return@Constants mapOf(
+        "MediaType" to MediaType.getConstants(),
         "SortBy" to SortBy.getConstants(),
       )
     }
@@ -55,18 +52,44 @@ class ExpoMusicLibraryModule : Module() {
     Events("onChange")
 
     AsyncFunction("requestPermissionsAsync") { writeOnly: Boolean, promise: Promise ->
-      askForPermissionsWithPermissionsManager(
-        appContext.permissions,
-        promise,
-        *getManifestPermissions(writeOnly)
-      )
+      val permissions = getManifestPermissions(writeOnly)
+      if (permissions.isEmpty()) {
+        resolveGrantedPermission(promise)
+      } else {
+        askForPermissionsWithPermissionsManager(
+          appContext.permissions,
+          promise,
+          *permissions
+        )
+      }
     }
 
     AsyncFunction("getPermissionsAsync") { writeOnly: Boolean, promise: Promise ->
-      getPermissionsWithPermissionsManager(
-        appContext.permissions,
-        promise,
-        *getManifestPermissions(writeOnly)
+      val permissions = getManifestPermissions(writeOnly)
+      if (permissions.isEmpty()) {
+        resolveGrantedPermission(promise)
+      } else {
+        getPermissionsWithPermissionsManager(
+          appContext.permissions,
+          promise,
+          *permissions
+        )
+      }
+    }
+
+    AsyncFunction("getCapabilitiesAsync") { promise: Promise ->
+      promise.resolve(
+        mapOf(
+          "playlists" to false,
+          "directories" to true,
+          "cloudItems" to false,
+          "protectedAssets" to (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R),
+          "uriSchemes" to if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            listOf("content", "file")
+          } else {
+            listOf("content")
+          }
+        )
       )
     }
 
@@ -86,10 +109,10 @@ class ExpoMusicLibraryModule : Module() {
       }
     }
 
-    AsyncFunction("getAlbumAssetsAsync") { albumName: String, options: SubQueryOptions, promise: Promise ->
+    AsyncFunction("getAlbumAssetsAsync") { albumId: String, options: SubQueryOptions, promise: Promise ->
       throwUnlessPermissionsGranted(isWrite = false) {
         withModuleScope(promise) {
-          GetAlbumAssets(context, albumName, options, promise).execute()
+          GetAlbumAssets(context, albumId, options, promise).execute()
         }
       }
     }
@@ -162,7 +185,14 @@ class ExpoMusicLibraryModule : Module() {
       val handler = Handler(Looper.getMainLooper())
       mediaObserver = object : ContentObserver(handler) {
         override fun onChange(selfChange: Boolean) {
-          sendEvent("onChange", mapOf("hasIncrementalChanges" to true))
+          sendEvent(
+            "onChange",
+            mapOf(
+              "hasIncrementalChanges" to false,
+              "requiresReload" to true,
+              "requiresFullReload" to true
+            )
+          )
         }
       }
       context.contentResolver.registerContentObserver(
@@ -179,23 +209,14 @@ class ExpoMusicLibraryModule : Module() {
   }
 
   @SuppressLint("InlinedApi")
-  private fun getManifestPermissions(writeOnly: Boolean): Array<String> {
-    val shouldAddMediaLocationAccess = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
-        MediaLibraryUtils.hasManifestPermission(context, ACCESS_MEDIA_LOCATION)
-
-    val shouldAddWriteExternalStorage = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU &&
-        MediaLibraryUtils.hasManifestPermission(context, WRITE_EXTERNAL_STORAGE)
-
-    val shouldAddGranularPermissions = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-        listOf(READ_MEDIA_AUDIO, READ_MEDIA_VIDEO, READ_MEDIA_IMAGES)
-          .all { MediaLibraryUtils.hasManifestPermission(context, it) }
-
-    return listOfNotNull(
-      WRITE_EXTERNAL_STORAGE.takeIf { shouldAddWriteExternalStorage },
-      READ_EXTERNAL_STORAGE.takeIf { !writeOnly && !shouldAddGranularPermissions },
-      ACCESS_MEDIA_LOCATION.takeIf { shouldAddMediaLocationAccess },
-      *getGranularPermissions(writeOnly, shouldAddGranularPermissions)
-    ).toTypedArray()
+  private fun getManifestPermissions(
+    @Suppress("UNUSED_PARAMETER") writeOnly: Boolean
+  ): Array<String> {
+    return when {
+      Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> arrayOf(READ_MEDIA_AUDIO)
+      Build.VERSION.SDK_INT >= Build.VERSION_CODES.M -> arrayOf(READ_EXTERNAL_STORAGE)
+      else -> emptyArray()
+    }
   }
 
   private inline fun withModuleScope(promise: Promise, crossinline block: () -> Unit) = moduleCoroutineScope.launch {
@@ -205,27 +226,29 @@ class ExpoMusicLibraryModule : Module() {
       promise.reject(e)
     } catch (e: ModuleDestroyedException) {
       promise.reject(TAG, "MediaLibrary module destroyed", e)
+    } catch (e: Exception) {
+      promise.reject(ERROR_UNABLE_TO_LOAD, e.message ?: "Unable to access the music library", e)
     }
   }
 
-  @SuppressLint("InlinedApi")
-  private fun getGranularPermissions(writeOnly: Boolean, shouldAdd: Boolean): Array<String> {
-    val addPermission = !writeOnly && shouldAdd
-    return listOfNotNull(
-      READ_MEDIA_IMAGES.takeIf { addPermission },
-      READ_MEDIA_VIDEO.takeIf { addPermission },
-      READ_MEDIA_AUDIO.takeIf { addPermission }
-    ).toTypedArray()
+  private fun resolveGrantedPermission(promise: Promise) {
+    promise.resolve(
+      mapOf(
+        "status" to "granted",
+        "granted" to true,
+        "canAskAgain" to true,
+        "expires" to "never"
+      )
+    )
   }
 
   private val isMissingPermissions: Boolean
     get() = hasReadPermissions()
 
-  private val isMissingWritePermission: Boolean
-    get() = hasWritePermissions()
-
   private inline fun throwUnlessPermissionsGranted(isWrite: Boolean = true, block: () -> Unit) {
-    val missingPermissionsCondition = if (isWrite) isMissingWritePermission else isMissingPermissions
+    // The module exposes read-only MediaStore operations. `isWrite` remains in the
+    // helper signature for source compatibility with the original implementation.
+    val missingPermissionsCondition = if (isWrite) false else isMissingPermissions
     val missingPermissionsMessage = if (isWrite) ERROR_NO_WRITE_PERMISSION_MESSAGE else ERROR_NO_PERMISSIONS_MESSAGE
     if (missingPermissionsCondition) {
       throw PermissionsException(missingPermissionsMessage)
@@ -234,10 +257,10 @@ class ExpoMusicLibraryModule : Module() {
   }
 
   private fun hasReadPermissions(): Boolean {
-    val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-      arrayOf(READ_MEDIA_IMAGES, READ_MEDIA_AUDIO, READ_MEDIA_VIDEO)
-    } else {
-      arrayOf(READ_EXTERNAL_STORAGE, WRITE_EXTERNAL_STORAGE)
+    val permissions = when {
+      Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> arrayOf(READ_MEDIA_AUDIO)
+      Build.VERSION.SDK_INT >= Build.VERSION_CODES.M -> arrayOf(READ_EXTERNAL_STORAGE)
+      else -> return false
     }
 
     return appContext.permissions
@@ -245,16 +268,7 @@ class ExpoMusicLibraryModule : Module() {
       ?.not() ?: false
   }
 
-  private fun hasWritePermissions() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-    false
-  } else {
-    appContext.permissions
-      ?.hasGrantedPermissions(WRITE_EXTERNAL_STORAGE)
-      ?.not() ?: false
-  }
-
   companion object {
-    private const val WRITE_REQUEST_CODE = 7463
     internal val TAG = ExpoMusicLibraryModule::class.java.simpleName
   }
 }

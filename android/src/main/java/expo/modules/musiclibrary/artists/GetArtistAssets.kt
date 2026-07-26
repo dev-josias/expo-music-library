@@ -1,7 +1,6 @@
 package expo.modules.musiclibrary.artists
 
 import android.content.Context
-import android.os.Bundle
 import android.provider.MediaStore
 import expo.modules.kotlin.Promise
 import expo.modules.musiclibrary.ASSET_PROJECTION
@@ -10,8 +9,11 @@ import expo.modules.musiclibrary.ERROR_NO_PERMISSIONS
 import expo.modules.musiclibrary.ERROR_UNABLE_TO_LOAD
 import expo.modules.musiclibrary.ERROR_UNABLE_TO_LOAD_PERMISSION
 import expo.modules.musiclibrary.SubQueryOptions
-import expo.modules.musiclibrary.assets.convertOrderDescriptors
-import expo.modules.musiclibrary.assets.putAssetsInfo
+import expo.modules.musiclibrary.assets.availabilitySelection
+import expo.modules.musiclibrary.assets.combineSelections
+import expo.modules.musiclibrary.assets.createPagedResponse
+import expo.modules.musiclibrary.assets.getPaginationOptions
+import expo.modules.musiclibrary.assets.stableOrder
 import java.io.IOException
 
 internal class GetArtistAssets(
@@ -22,36 +24,38 @@ internal class GetArtistAssets(
 ) {
   fun execute() {
     val contentResolver = context.contentResolver
-    val selection = "${MediaStore.Audio.Media.ARTIST_ID} = ?"
-    val selectionArgs = arrayOf(artistId)
-    val order = if (options.sortBy.isNotEmpty()) convertOrderDescriptors(options.sortBy)
-                else "${MediaStore.Audio.Media.DISPLAY_NAME} ASC"
-    val limit = options.first.toInt()
-    val offset = options.after?.toIntOrNull() ?: 0
 
     try {
+      val pagination = getPaginationOptions(
+        options.first,
+        options.after,
+        options.availability,
+        options.artwork
+      )
       contentResolver.query(
         MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
         ASSET_PROJECTION,
-        selection,
-        selectionArgs,
-        order
+        combineSelections(
+          "${MediaStore.Audio.Media.ARTIST_ID} = ?",
+          availabilitySelection(options.availability)
+        ),
+        arrayOf(artistId),
+        stableOrder(options.sortBy, "${MediaStore.Audio.Media.DISPLAY_NAME} ASC")
       ).use { assetsCursor ->
         if (assetsCursor == null) throw AssetQueryException()
 
-        val assetsInfo = ArrayList<Bundle>()
-        putAssetsInfo(assetsCursor, assetsInfo, limit, offset)
-
-        val response = Bundle().apply {
-          putParcelableArrayList("assets", assetsInfo)
-          putBoolean("hasNextPage", !assetsCursor.isAfterLast)
-          putString("endCursor", assetsCursor.position.toString())
-          putInt("totalCount", assetsCursor.count)
-        }
-        promise.resolve(response)
+        promise.resolve(
+          createPagedResponse(
+            contentResolver,
+            assetsCursor,
+            pagination.limit,
+            pagination.offset,
+            pagination.artworkMode
+          )
+        )
       }
     } catch (e: SecurityException) {
-      promise.reject(ERROR_UNABLE_TO_LOAD_PERMISSION, "Could not get assets: need READ_EXTERNAL_STORAGE permission.", e)
+      promise.reject(ERROR_UNABLE_TO_LOAD_PERMISSION, "Could not get assets: missing audio-library read permission.", e)
     } catch (e: IOException) {
       promise.reject(ERROR_UNABLE_TO_LOAD, "Could not read file", e)
     } catch (e: IllegalArgumentException) {

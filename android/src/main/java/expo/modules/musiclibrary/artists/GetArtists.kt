@@ -26,7 +26,7 @@ internal open class GetArtists(
                     projection,
                     null,
                     null,
-                    "${Artists.ARTIST} ASC"
+                    "${Artists.ARTIST} ASC, ${Artists._ID} ASC"
                 )
                 .use { artistCursor ->
                     if (artistCursor == null) {
@@ -43,18 +43,17 @@ internal open class GetArtists(
                             continue
                         }
 
-                        val artist = artists[id] ?: Artist(
-                            id = id,
-                            title = artistCursor.getString(artistDisplayNameIndex),
-                            artistSongs = artistCursor.getInt(artistSongsIndex)
-                        ).also {
-                            artists[id] = it
+                        if (artists[id] == null) {
+                            artists[id] = Artist(
+                                id = id,
+                                title = artistCursor.getString(artistDisplayNameIndex),
+                                artistSongs = artistCursor.getInt(artistSongsIndex),
+                                count = artistCursor.getInt(artistSongsIndex)
+                            )
                         }
-
-                        artist.count++
                     }
 
-                    promise.resolve(artists.values.map { it.toBundle() })
+                    promise.resolve(artists.values.sortedBy { it.title }.map { it.toBundle() })
                 }
         } catch (e: SecurityException) {
             promise.reject(
@@ -66,13 +65,13 @@ internal open class GetArtists(
         }
     }
 
-    private class Artist(private val id: String, private val title: String, var count: Int = 0, private val artistSongs:Int) {
+    private class Artist(private val id: String, val title: String, var count: Int = 0, private val artistSongs:Int) {
         fun toBundle() = Bundle().apply {
             putString("id", id)
             putString("title", title)
             putParcelable("type", null)
             putInt("assetCount", count)
-            putInt("artistSongs", artistSongs)
+            putInt("albumSongs", artistSongs)
         }
     }
 }

@@ -138,12 +138,6 @@ internal final class InvalidAudioFileException: GenericException<String>, @unche
   }
 }
 
-internal final class ArtworkAccessException: Exception, @unchecked Sendable {
-  override var reason: String {
-    "Cannot access artwork - photo library permission may be required"
-  }
-}
-
 internal final class PlaylistNotFoundException: GenericException<String>, @unchecked Sendable {
   override var reason: String {
     "Playlist with ID '\(param)' not found"

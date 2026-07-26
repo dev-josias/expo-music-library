@@ -18,3 +18,11 @@ enum class SortBy(val keyName: String, val mediaColumnName: String) {
     fun fromKeyName(keyName: String) = entries.find { it.keyName == keyName }
   }
 }
+
+enum class MediaType(val keyName: String) {
+  AUDIO("audio");
+
+  companion object {
+    fun getConstants() = entries.associate { Pair(it.keyName, it.keyName) }
+  }
+}

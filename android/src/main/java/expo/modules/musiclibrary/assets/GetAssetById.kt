@@ -33,8 +33,14 @@ internal class GetAssetById(
         if (cursor == null) throw AssetQueryException()
 
         val assets = ArrayList<Bundle>()
-        putAssetsInfo(cursor, assets, 1, 0)
-
+        putAssetsInfo(
+          contentResolver,
+          cursor,
+          assets,
+          1,
+          0,
+          ArtworkMode.URI
+        )
         if (assets.isEmpty()) {
           promise.reject("E_ASSET_NOT_FOUND", "Asset with id $assetId not found.", null)
           return
@@ -42,7 +48,7 @@ internal class GetAssetById(
         promise.resolve(assets[0])
       }
     } catch (e: SecurityException) {
-      promise.reject(ERROR_UNABLE_TO_LOAD_PERMISSION, "Could not get asset: need READ_EXTERNAL_STORAGE permission.", e)
+      promise.reject(ERROR_UNABLE_TO_LOAD_PERMISSION, "Could not get asset: missing audio-library read permission.", e)
     } catch (e: IOException) {
       promise.reject(ERROR_UNABLE_TO_LOAD, "Could not read file", e)
     } catch (e: UnsupportedOperationException) {
