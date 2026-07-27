@@ -310,6 +310,31 @@ try {
     }
   });
 
+  runTest("publish workflow builds source before artifact reverification", () => {
+    const publishWorkflow = fs.readFileSync(
+      path.join(root, ".github", "workflows", "publish.yml"),
+      "utf8"
+    );
+    const buildStep = publishWorkflow.indexOf(
+      "name: Build package source for artifact comparison"
+    );
+    const reverifyStep = publishWorkflow.indexOf(
+      "name: Reverify the downloaded artifact"
+    );
+
+    assert.ok(buildStep >= 0, "publish workflow must build the package source");
+    assert.ok(
+      publishWorkflow
+        .slice(buildStep, reverifyStep)
+        .includes("run: bun run build"),
+      "publish workflow must run the package build before reverification"
+    );
+    assert.ok(
+      reverifyStep > buildStep,
+      "publish workflow must build before reverifying the artifact"
+    );
+  });
+
   runTest("package verifier accepts the exact fresh artifact", () => {
     expectSuccess(
       runNode(verifier, [baselineArtifact]),
