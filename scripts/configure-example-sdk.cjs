@@ -27,6 +27,7 @@ pkg.dependencies.expo = fixture.expo;
 pkg.dependencies["expo-status-bar"] = fixture.expoStatusBar;
 pkg.dependencies.react = fixture.react;
 pkg.dependencies["react-native"] = fixture.reactNative;
+pkg.devDependencies.typescript = fixture.typescript;
 
 if (artifactArgument) {
   const sourcePackage = require(path.join(projectRoot, "package.json"));

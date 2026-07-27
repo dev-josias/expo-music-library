@@ -300,6 +300,10 @@ try {
       assert.equal(dependencies.react, versions.react);
       assert.equal(dependencies["react-native"], versions.reactNative);
       assert.equal(dependencies["expo-music-library"], expectedArtifact);
+      assert.equal(
+        lock.packages[""].devDependencies.typescript,
+        versions.typescript
+      );
       assert.equal(packedDependency.version, pkg.version);
       assert.equal(packedDependency.resolved, expectedArtifact);
       assert.equal(packedDependency.integrity, baselineIntegrity);
