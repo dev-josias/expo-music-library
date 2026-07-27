@@ -181,7 +181,7 @@ if (
 const scenario = process.env.MOCK_NPM_SCENARIO;
 const stateExists = fs.existsSync(process.env.MOCK_NPM_STATE);
 if (verb === "view") {
-  if (scenario === "existing-same" || stateExists) {
+  if (scenario === "existing-same") {
     process.stdout.write(JSON.stringify(process.env.MOCK_NPM_INTEGRITY));
     process.exit(0);
   }
@@ -193,13 +193,49 @@ if (verb === "view") {
     process.stderr.write("npm ERR! code ECONNRESET\\n");
     process.exit(1);
   }
+  if (stateExists) {
+    const propagationMisses = Number.parseInt(
+      fs.readFileSync(process.env.MOCK_NPM_STATE, "utf8"),
+      10
+    );
+    if (Number.isInteger(propagationMisses) && propagationMisses > 0) {
+      fs.writeFileSync(
+        process.env.MOCK_NPM_STATE,
+        String(propagationMisses - 1)
+      );
+      process.stderr.write("npm ERR! code E404\\n");
+      process.exit(1);
+    }
+    process.stdout.write(JSON.stringify(process.env.MOCK_NPM_INTEGRITY));
+    process.exit(0);
+  }
   process.stderr.write("npm ERR! code E404\\n");
   process.exit(1);
 }
 
-if (verb === "publish" && scenario === "missing-publish") {
-  fs.writeFileSync(process.env.MOCK_NPM_STATE, "published");
-  process.exit(0);
+if (verb === "publish") {
+  if (scenario === "missing-publish") {
+    fs.writeFileSync(process.env.MOCK_NPM_STATE, "0");
+    process.exit(0);
+  }
+  if (scenario === "missing-publish-delayed") {
+    fs.writeFileSync(process.env.MOCK_NPM_STATE, "2");
+    process.exit(0);
+  }
+  if (scenario === "missing-publish-unpropagated") {
+    process.exit(0);
+  }
+  if (scenario === "ambiguous-publish-delayed") {
+    fs.writeFileSync(process.env.MOCK_NPM_STATE, "2");
+    process.stderr.write("npm ERR! code ECONNRESET\\n");
+    process.exit(1);
+  }
+  if (scenario === "ambiguous-publish-missing") {
+    process.stderr.write(
+      \`npm ERR! \${process.env.MOCK_NPM_DIAGNOSTIC}\\n\`
+    );
+    process.exit(1);
+  }
 }
 
 process.stderr.write("unexpected mock npm invocation\\n");
@@ -245,22 +281,29 @@ function runPublisher(
   fs.mkdirSync(runRoot, { recursive: true });
   const logPath = path.join(runRoot, "npm.log");
   const statePath = path.join(runRoot, "state");
+  const sensitiveDiagnostic = `mock-sensitive-${integrity}`;
   const environment = {
     ...process.env,
     PATH: `${mockBin}${path.delimiter}${process.env.PATH}`,
     NPM_CONFIG_CACHE: path.join(runRoot, "npm-cache"),
     MOCK_NPM_INTEGRITY: integrity,
     MOCK_NPM_LOG: logPath,
+    MOCK_NPM_DIAGNOSTIC: sensitiveDiagnostic,
     MOCK_NPM_SCENARIO: scenario,
     MOCK_NPM_STATE: statePath,
     MOCK_REAL_NPM: realNpm,
+    EXPO_MUSIC_LIBRARY_REGISTRY_RETRY_DELAY_MS: "0",
   };
   const result = runNode(
     path.join(root, "scripts", "publish-package.cjs"),
     [artifactPath],
     environment
   );
-  return { calls: readMockLog(logPath), result };
+  return {
+    calls: readMockLog(logPath),
+    result,
+    sensitiveDiagnostic,
+  };
 }
 
 function runTest(name, callback) {
@@ -523,6 +566,70 @@ try {
     expectSuccess(result, "missing version publish");
     assert.equal(calls.filter((call) => call.verb === "publish").length, 1);
     assert.equal(calls.filter((call) => call.verb === "view").length, 2);
+  });
+
+  runTest("publisher retries registry propagation after a successful publish", () => {
+    const { result, calls } = runPublisher(
+      baselineArtifact,
+      "missing-publish-delayed",
+      integrity,
+      mockBin,
+      "missing-publish-delayed"
+    );
+    expectSuccess(result, "successful publish propagation reconciliation");
+    assert.equal(calls.filter((call) => call.verb === "publish").length, 1);
+    assert.equal(calls.filter((call) => call.verb === "view").length, 4);
+  });
+
+  runTest("publisher bounds successful publish reconciliation", () => {
+    const { result, calls } = runPublisher(
+      baselineArtifact,
+      "missing-publish-unpropagated",
+      integrity,
+      mockBin,
+      "missing-publish-unpropagated"
+    );
+    expectFailure(
+      result,
+      /accepted the publish command but the registry result could not be reconciled/,
+      "bounded successful publish reconciliation"
+    );
+    assert.equal(calls.filter((call) => call.verb === "publish").length, 1);
+    assert.equal(calls.filter((call) => call.verb === "view").length, 7);
+  });
+
+  runTest("publisher reconciles an ambiguous publish after propagation", () => {
+    const { result, calls } = runPublisher(
+      baselineArtifact,
+      "ambiguous-publish-delayed",
+      integrity,
+      mockBin,
+      "ambiguous-publish-delayed"
+    );
+    expectSuccess(result, "ambiguous publish propagation reconciliation");
+    assert.equal(calls.filter((call) => call.verb === "publish").length, 1);
+    assert.equal(calls.filter((call) => call.verb === "view").length, 4);
+  });
+
+  runTest("publisher bounds ambiguous publish reconciliation", () => {
+    const { result, calls, sensitiveDiagnostic } = runPublisher(
+      baselineArtifact,
+      "ambiguous-publish-missing",
+      integrity,
+      mockBin,
+      "ambiguous-publish-missing"
+    );
+    expectFailure(
+      result,
+      /publish failed and the version is not in the registry/,
+      "bounded ambiguous publish reconciliation"
+    );
+    assert.equal(calls.filter((call) => call.verb === "publish").length, 1);
+    assert.equal(calls.filter((call) => call.verb === "view").length, 7);
+    assert.ok(
+      !combinedOutput(result).includes(sensitiveDiagnostic),
+      "publisher must not expose raw npm diagnostics"
+    );
   });
 
   runTest("publisher does not treat registry failures as missing versions", () => {

@@ -9,6 +9,12 @@ const pkg = require(path.join(root, "package.json"));
 const artifactArgument = process.argv[2];
 const expectedFilename = `${pkg.name}-${pkg.version}.tgz`;
 const npmRegistry = "https://registry.npmjs.org/";
+const registryReconciliationAttempts = 6;
+const registryRetryDelayMilliseconds =
+  process.env.EXPO_MUSIC_LIBRARY_REGISTRY_RETRY_DELAY_MS === "0"
+    ? 0
+    : 2_000;
+const registryRetrySignal = new Int32Array(new SharedArrayBuffer(4));
 
 if (!artifactArgument) {
   throw new Error(`An npm artifact is required (expected ${expectedFilename}).`);
@@ -102,6 +108,43 @@ function registryState() {
   throw new Error("The npm registry could not be queried safely.");
 }
 
+function waitForRegistryRetry() {
+  if (registryRetryDelayMilliseconds > 0) {
+    Atomics.wait(
+      registryRetrySignal,
+      0,
+      0,
+      registryRetryDelayMilliseconds
+    );
+  }
+}
+
+function reconcileRegistryAfterPublish() {
+  let lastState = { status: "unavailable" };
+
+  for (
+    let attempt = 1;
+    attempt <= registryReconciliationAttempts;
+    attempt += 1
+  ) {
+    try {
+      lastState = registryState();
+    } catch {
+      lastState = { status: "unavailable" };
+    }
+
+    if (lastState.status === "published") {
+      return lastState;
+    }
+
+    if (attempt < registryReconciliationAttempts) {
+      waitForRegistryRetry();
+    }
+  }
+
+  return lastState;
+}
+
 function acceptExistingVersion(state) {
   if (state.status === "missing") {
     return false;
@@ -133,10 +176,8 @@ const publishResult = runNpm([
 ]);
 
 if (publishResult.status !== 0) {
-  let stateAfterFailure;
-  try {
-    stateAfterFailure = registryState();
-  } catch {
+  const stateAfterFailure = reconcileRegistryAfterPublish();
+  if (stateAfterFailure.status === "unavailable") {
     throw new Error(
       "npm publish failed and the registry result could not be reconciled."
     );
@@ -147,11 +188,13 @@ if (publishResult.status !== 0) {
   throw new Error("npm publish failed and the version is not in the registry.");
 }
 
-const publishedState = registryState();
-if (
-  publishedState.status !== "published" ||
-  publishedState.integrity !== candidateIntegrity
-) {
+const publishedState = reconcileRegistryAfterPublish();
+if (publishedState.status !== "published") {
+  throw new Error(
+    "npm accepted the publish command but the registry result could not be reconciled."
+  );
+}
+if (publishedState.integrity !== candidateIntegrity) {
   throw new Error(
     "npm accepted the publish command but the registered integrity does not match."
   );
