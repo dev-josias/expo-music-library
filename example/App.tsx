@@ -105,7 +105,8 @@ export default function App() {
       setLoading(false);
     } catch (err) {
       console.error("Error loading music library:", err);
-      setError(`Failed to fetch music data: ${err.message || err}`);
+      const message = err instanceof Error ? err.message : String(err);
+      setError(`Failed to fetch music data: ${message}`);
       setLoading(false);
     }
   };

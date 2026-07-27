@@ -4,6 +4,7 @@ import {
   withAndroidManifest,
   withInfoPlist,
 } from "@expo/config-plugins";
+import pkg from "../../package.json";
 
 export type MusicLibraryPluginProps = {
   /**
@@ -92,8 +93,5 @@ export const withMusicLibrary: ConfigPlugin<MusicLibraryPluginProps> = (
   config = withMusicLibraryAndroid(config);
   return config;
 };
-
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const pkg = require("../../package.json");
 
 export default createRunOncePlugin(withMusicLibrary, pkg.name, pkg.version);

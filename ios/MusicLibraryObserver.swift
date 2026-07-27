@@ -7,7 +7,6 @@ protocol MusicLibraryObserverHandler: AnyObject {
 
 final class MusicLibraryObserver: NSObject {
   private weak var handler: MusicLibraryObserverHandler?
-  private let observerQueue = DispatchQueue(label: "music-library-observer", qos: .utility)
   private var isObserving = false
 
   init(handler: MusicLibraryObserverHandler) {
@@ -36,6 +35,8 @@ final class MusicLibraryObserver: NSObject {
   }
 
   func stopObserving() {
+    handler = nil
+
     guard isObserving else {
       return
     }
@@ -50,14 +51,8 @@ final class MusicLibraryObserver: NSObject {
   }
 
   @objc private func handleMusicLibraryChange() {
-    observerQueue.async { [weak self] in
-      guard let handler = self?.handler else {
-        return
-      }
-
-      DispatchQueue.main.async {
-        handler.didChange()
-      }
+    DispatchQueue.main.async { [weak self] in
+      self?.handler?.didChange()
     }
   }
 }

@@ -1,6 +1,6 @@
-import {
+import { UnavailabilityError } from "expo-modules-core";
+import type {
   PermissionResponse as EXPermissionResponse,
-  UnavailabilityError,
 } from "expo-modules-core";
 
 import type { ChangeEventPayload } from "./ExpoMusicLibrary.types";

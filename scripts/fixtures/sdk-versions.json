@@ -1,0 +1,20 @@
+{
+  "55": {
+    "expo": "55.0.28",
+    "expoStatusBar": "55.0.6",
+    "react": "19.2.0",
+    "reactNative": "0.83.10"
+  },
+  "56": {
+    "expo": "56.0.17",
+    "expoStatusBar": "56.0.4",
+    "react": "19.2.3",
+    "reactNative": "0.85.3"
+  },
+  "57": {
+    "expo": "57.0.8",
+    "expoStatusBar": "57.0.1",
+    "react": "19.2.3",
+    "reactNative": "0.86.0"
+  }
+}

@@ -10,9 +10,20 @@ public class MusicLibraryModule: Module, MusicLibraryObserverHandler {
     let artwork: MusicArtworkMode
   }
 
+  private let observationLock = NSLock()
   private var changeDelegate: MusicLibraryObserver?
+  private var isDestroyed = false
 
   func didChange() {
+    observationLock.lock()
+    defer {
+      observationLock.unlock()
+    }
+
+    guard !isDestroyed, changeDelegate != nil else {
+      return
+    }
+
     // MPMediaLibraryDidChange is an invalidation notification. It doesn't
     // include an incremental diff, so consumers must refresh cached queries.
     sendEvent("onChange", [
@@ -27,22 +38,26 @@ public class MusicLibraryModule: Module, MusicLibraryObserverHandler {
 
     Events("onChange")
 
-    Constants {
+    Constant("MediaType") {
       [
-        "MediaType": [
-          "audio": "audio"
-        ],
-        "SortBy": [
-          "default": "default",
-          "creationTime": "creationTime",
-          "modificationTime": "modificationTime",
-          "duration": "duration",
-          "title": "title",
-          "artist": "artist",
-          "album": "album"
-        ],
-        "CHANGE_LISTENER_NAME": "onChange"
+        "audio": "audio"
       ]
+    }
+
+    Constant("SortBy") {
+      [
+        "default": "default",
+        "creationTime": "creationTime",
+        "modificationTime": "modificationTime",
+        "duration": "duration",
+        "title": "title",
+        "artist": "artist",
+        "album": "album"
+      ]
+    }
+
+    Constant("CHANGE_LISTENER_NAME") {
+      "onChange"
     }
 
     AsyncFunction("getPermissionsAsync") { (writeOnly: Bool, promise: Promise) in
@@ -334,13 +349,37 @@ public class MusicLibraryModule: Module, MusicLibraryObserverHandler {
       promise.resolve(result)
     }
 
-    OnStartObserving {
+    OnStartObserving("onChange") {
+      self.observationLock.lock()
+      defer {
+        self.observationLock.unlock()
+      }
+
+      guard !self.isDestroyed, self.changeDelegate == nil else {
+        return
+      }
       self.changeDelegate = MusicLibraryObserver(handler: self)
     }
 
-    OnStopObserving {
-      self.changeDelegate = nil
+    OnStopObserving("onChange") {
+      self.stopObserving()
     }
+
+    OnDestroy {
+      self.stopObserving(destroy: true)
+    }
+  }
+
+  private func stopObserving(destroy: Bool = false) {
+    observationLock.lock()
+    if destroy {
+      isDestroyed = true
+    }
+    let delegate = changeDelegate
+    changeDelegate = nil
+    observationLock.unlock()
+
+    delegate?.stopObserving()
   }
 
   // MARK: - Permission helpers

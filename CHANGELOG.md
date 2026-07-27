@@ -3,6 +3,37 @@
 All notable changes to this package are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## [1.3.2] - 2026-07-26
+
+### Fixed
+
+- Replaced deprecated plural Expo Modules constants with singular constant
+  definitions on Android and iOS.
+- Moved Android queries onto the app context's lifecycle-owned background
+  coroutine scope and preserved structured cancellation.
+- Made Android and iOS library observers idempotent and prevented queued
+  callbacks from firing after listener or module teardown.
+- Switched Android to Expo-managed SDK defaults and aligned the podspec with
+  the Expo 55 compatibility floor of iOS 15.1 and Swift 5.9.
+- Removed an unregistered privacy manifest whose required-reason declaration
+  did not correspond to APIs used by the module.
+
+### Tooling
+
+- Updated the development and example toolchains to Expo SDK 57, React Native
+  0.86, and React 19.2.
+- Replaced stale checked-in example native projects with an Expo-generated
+  fixture.
+- Added Android and iOS native compile gates across Expo SDK 55, 56, and 57.
+- Made CI, release validation, and npm publication operate on the same verified
+  tarball, with registry-integrity reconciliation for safe reruns.
+
+### Compatibility
+
+- Runtime peer support remains Expo SDK 55 through 57 and React Native 0.83
+  through 0.86.
+- No JavaScript API or serialized asset fields were removed.
+
 ## [1.3.1] - 2026-07-26
 
 ### Added

@@ -32,7 +32,7 @@ local, unprotected audio URL.
 | Web | Native API unavailable; `isAvailableAsync()` safely returns `false` |
 | Expo Go | Not supported; use a development build |
 
-Version 1.3.1 targets Expo SDK 55 through 57:
+Version 1.3.2 targets Expo SDK 55 through 57:
 
 | Expo SDK | React Native | React | Minimum Node.js | Expo host minimums |
 | --- | --- | --- | --- | --- |
@@ -357,8 +357,8 @@ The event payload is:
 
 ```ts
 type ChangeEventPayload = {
-  hasIncrementalChanges: boolean; // false at runtime in 1.3.1
-  requiresFullReload?: boolean; // true at runtime in 1.3.1
+  hasIncrementalChanges: boolean; // false at runtime since 1.3.1
+  requiresFullReload?: boolean; // true at runtime since 1.3.1
   requiresReload?: boolean; // compatibility alias
 };
 ```
@@ -396,7 +396,7 @@ module itself is read-only.
 
 ### The package name is rejected as a config plugin
 
-Version 1.3.1 includes the root `app.plugin.js` entry point expected by Expo.
+Version 1.3.1 and newer include the root `app.plugin.js` entry point expected by Expo.
 Upgrade the package, then rerun prebuild and rebuild the native app.
 
 ### A song is listed but cannot play or separate

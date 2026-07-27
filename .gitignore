@@ -49,6 +49,7 @@ example/vendor/
 # node.js
 #
 node_modules/
+npm-artifact/
 npm-debug.log
 yarn-debug.log
 yarn-error.log
