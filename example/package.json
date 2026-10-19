@@ -15,7 +15,7 @@
   "dependencies": {
     "expo": "~57.0.8",
     "expo-music-library": "file:..",
-    "expo-status-bar": "~57.0.1",
+    "expo-status-bar": "~58.0.3",
     "react": "19.2.3",
     "react-native": "0.86.0"
   },
